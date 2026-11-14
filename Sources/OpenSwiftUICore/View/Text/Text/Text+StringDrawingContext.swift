@@ -254,15 +254,28 @@ extension NSAttributedString {
                 hasTruncatedRanges: drawingContext.hasTruncatedRanges
             )
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            guard let measure = PlatformTextMeasurer.measure else {
+                _openSwiftUIPlatformUnimplementedWarning()
+                return Metrics(
+                    size: .zero,
+                    scale: 1,
+                    firstBaseline: 0,
+                    lastBaseline: 0,
+                    baselineAdjustment: 0,
+                    requestedWidth: requestedSize.width,
+                    numberOfLines: wantsNumberOfLineFragments ? 0 : nil,
+                    hasTruncatedRanges: false
+                )
+            }
+            let measured = measure(self, requestedSize, lineLimit)
             return Metrics(
-                size: .zero,
+                size: measured.size,
                 scale: 1,
-                firstBaseline: 0,
-                lastBaseline: 0,
+                firstBaseline: measured.firstBaseline,
+                lastBaseline: measured.lastBaseline,
                 baselineAdjustment: 0,
                 requestedWidth: requestedSize.width,
-                numberOfLines: wantsNumberOfLineFragments ? 0 : nil,
+                numberOfLines: wantsNumberOfLineFragments ? UInt(measured.numberOfLines) : nil,
                 hasTruncatedRanges: false
             )
             #endif

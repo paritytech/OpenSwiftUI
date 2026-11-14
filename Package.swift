@@ -901,7 +901,31 @@ if versionedDocCPlugin {
 }
 
 if renderGTKCondition {
-    package.targets.append(cgtkTarget)
+    // Linux host: GTK4 supplies the Wayland window, frame clock and pointer/touch input;
+    // Cairo draws the display list. See Sources/OpenSwiftUI/Integration/Hosting/GTK.
+    package.targets += [
+        cgtkTarget,
+        .target(
+            name: "COpenSwiftUIGTKHost",
+            dependencies: ["CGTK"]
+        ),
+    ]
+    openSwiftUITarget.dependencies += ["CGTK", "COpenSwiftUIGTKHost"]
+    openSwiftUITarget.swiftSettings = (openSwiftUITarget.swiftSettings ?? []) + [.define("OPENSWIFTUI_GTK")]
+}
+
+if !buildForDarwinPlatform {
+    // Off Darwin there is no system SwiftUI, so app sources can say `import SwiftUI` unchanged.
+    package.targets.append(
+        .target(
+            name: "SwiftUI",
+            dependencies: ["OpenSwiftUI"],
+            swiftSettings: sharedSwiftSettings
+        )
+    )
+    package.products.append(
+        .library(name: "SwiftUI", targets: ["SwiftUI"])
+    )
 }
 
 if !compatibilityTestCondition {

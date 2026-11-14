@@ -382,7 +382,9 @@ extension Font {
                 nil
             )
             #else
-            _openSwiftUIPlatformUnimplementedFailure()
+            // No font is resolved off Darwin: the host's PlatformTextMeasurer picks the face.
+            // The placeholder only keeps text resolution from trapping.
+            return CTFont()
             #endif
         }
         return cache

@@ -214,7 +214,14 @@ typealias PlatformApplication = NSObject
 typealias PlatformApplicationDelegate = AnyObject
 
 func runApp<Application>(_ app: Application) -> Never where Application: App {
+    #if OPENSWIFTUI_GTK
+    // A window is the default; the stdout renderer runs only when the app asks for it.
+    guard let rendererConfiguration = Application.rendererConfiguration else {
+        runGTKApp(app)
+    }
+    #else
     let rendererConfiguration = Application.rendererConfiguration ?? .stdout()
+    #endif
     guard case let .stdout(options) = rendererConfiguration.renderer else {
         print("OpenSwiftUI currently supports only the stdout renderer on this platform.")
         exit(1)
