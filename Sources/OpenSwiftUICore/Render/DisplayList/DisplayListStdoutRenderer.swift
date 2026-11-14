@@ -11,6 +11,8 @@ import OpenSwiftUI_SPI
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
 #endif
 
 // MARK: - DisplayList + stdout rendering
@@ -247,7 +249,7 @@ private func stdoutFormat(_ value: CGFloat) -> String {
 
 package enum StdoutTerminalSupport {
     package static var stdoutIsTerminal: Bool {
-        #if canImport(Darwin) || canImport(Glibc)
+        #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
         isatty(STDOUT_FILENO) == 1
         #else
         false
@@ -282,7 +284,7 @@ package enum StdoutTerminalSupport {
     package static func terminalSize(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> _RendererConfiguration.StdoutOptions.TerminalSize {
-        #if canImport(Darwin) || canImport(Glibc)
+        #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
         var windowSize = winsize()
         if ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &windowSize) == 0,
            windowSize.ws_col > 0,

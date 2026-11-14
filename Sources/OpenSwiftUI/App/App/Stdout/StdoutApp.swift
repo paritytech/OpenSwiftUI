@@ -7,6 +7,8 @@
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
 #elseif os(WASI)
 import WASILibc
 #endif
