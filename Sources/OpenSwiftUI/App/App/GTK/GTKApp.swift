@@ -6,8 +6,9 @@
 //
 //  Set `OPENSWIFTUI_GTK_CAPTURE_DIR` to render offscreen instead: frames are written there as
 //  PNGs on a virtual clock (`OPENSWIFTUI_GTK_CAPTURE_FRAMES`, default 60, at
-//  `OPENSWIFTUI_GTK_CAPTURE_FPS`, default 30). `OPENSWIFTUI_GTK_CAPTURE_TAPS` scripts taps as
-//  `frame:x,y;frame:x,y` in logical points.
+//  `OPENSWIFTUI_GTK_CAPTURE_FPS`, default 30). `OPENSWIFTUI_GTK_CAPTURE_POINTER` scripts the
+//  pointer as `frame:down:x,y;frame:move:x,y;frame:up:x,y` in logical points; the events are
+//  stamped with the virtual clock, so drag velocities come out as they would at that frame rate.
 
 #if OPENSWIFTUI_GTK
 import COpenSwiftUIGTKHost
@@ -34,7 +35,7 @@ func runGTKApp(_ app: some App) -> Never {
     let environment = processInfo.environment
     let session = GTKSession(
         host: GTKHostingView(rootView: item.value.view, environment: item.environment),
-        taps: scriptedTaps(from: environment["OPENSWIFTUI_GTK_CAPTURE_TAPS"])
+        script: scriptedPointer(from: environment["OPENSWIFTUI_GTK_CAPTURE_POINTER"])
     )
     var callbacks = OSUIGTKHostCallbacks()
     callbacks.resize = { context, width, height, scale in
@@ -71,16 +72,27 @@ func runGTKApp(_ app: some App) -> Never {
     exit(status)
 }
 
-private func scriptedTaps(from description: String?) -> [Int: CGPoint] {
-    var taps: [Int: CGPoint] = [:]
+private struct ScriptedPointerEvent {
+    var phase: OSUIPointerPhase
+    var location: CGPoint
+}
+
+private func scriptedPointer(from description: String?) -> [Int: [ScriptedPointerEvent]] {
+    var script: [Int: [ScriptedPointerEvent]] = [:]
     for entry in (description ?? "").split(separator: ";") {
         let parts = entry.split(whereSeparator: { $0 == ":" || $0 == "," })
-        guard parts.count == 3, let frame = Int(parts[0]), let x = Double(parts[1]), let y = Double(parts[2]) else {
-            fatalError("OPENSWIFTUI_GTK_CAPTURE_TAPS: expected frame:x,y, got \(entry)")
+        let phase: OSUIPointerPhase? = switch parts.count == 4 ? parts[1] : "" {
+        case "down": OSUI_POINTER_BEGAN
+        case "move": OSUI_POINTER_MOVED
+        case "up": OSUI_POINTER_ENDED
+        default: nil
         }
-        taps[frame] = CGPoint(x: x, y: y)
+        guard let phase, let frame = Int(parts[0]), let x = Double(parts[2]), let y = Double(parts[3]) else {
+            fatalError("OPENSWIFTUI_GTK_CAPTURE_POINTER: expected frame:down|move|up:x,y, got \(entry)")
+        }
+        script[frame, default: []].append(ScriptedPointerEvent(phase: phase, location: CGPoint(x: x, y: y)))
     }
-    return taps
+    return script
 }
 
 private func withOptionalCString<Result>(_ string: String?, _ body: (UnsafePointer<CChar>?) -> Result) -> Result {
@@ -90,12 +102,14 @@ private func withOptionalCString<Result>(_ string: String?, _ body: (UnsafePoint
 
 private final class GTKSession {
     let host: GTKHostingView
-    private let taps: [Int: CGPoint]
+    private let script: [Int: [ScriptedPointerEvent]]
     private var frame = 0
+    /// Scripted events are stamped from here plus the frame clock.
+    private let scriptEpoch = Time.systemUptime
 
-    init(host: GTKHostingView, taps: [Int: CGPoint]) {
+    init(host: GTKHostingView, script: [Int: [ScriptedPointerEvent]]) {
         self.host = host
-        self.taps = taps
+        self.script = script
     }
 
     static func from(_ context: UnsafeMutableRawPointer?) -> GTKSession {
@@ -104,11 +118,18 @@ private final class GTKSession {
 
     func tick(time: Double) -> Bool {
         defer { frame += 1 }
-        let needsDisplay = host.tick(time: time)
-        guard let location = taps[frame] else { return needsDisplay }
-        host.pointer(phase: OSUI_POINTER_BEGAN, location: location)
-        host.pointer(phase: OSUI_POINTER_ENDED, location: location)
-        return true
+        // GLib runs the main thread, so nothing else services Foundation's main run loop and
+        // the main dispatch queue. OpenSwiftUI posts work to both (timers, deferred actions).
+        // One pass without waiting handles whatever is due.
+        _ = RunLoop.main.run(mode: .default, before: Date())
+        for event in script[frame] ?? [] {
+            host.pointer(phase: event.phase, location: event.location, timestamp: scriptEpoch + time)
+        }
+        // State changes are committed by a run-loop observer that fires when the Foundation
+        // run loop goes idle, which it never does under GLib. Committing here, before the
+        // frame is evaluated, shows input from this frame in this frame.
+        RunLoop.flushObservers()
+        return host.tick(time: time)
     }
 }
 #endif

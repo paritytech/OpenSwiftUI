@@ -43,8 +43,8 @@ export PKG_CONFIG_SYSROOT_DIR="$sysroot"
 export PKG_CONFIG_LIBDIR="$sysroot/usr/lib/pkgconfig:$sysroot/usr/share/pkgconfig"
 export PKG_CONFIG_PATH="$PKG_CONFIG_LIBDIR"
 
-# Headers the SDK lacks. Only these two are taken from outside it: adding the sysroot's whole
-# include directory would shadow the SDK's own libc headers.
+# The two headers Compute needs and the SDK lacks. They go to every target; the sysroot's
+# other headers reach only the targets that use GTK, through its compiler flags.
 mkdir -p "$support/include" "$support/lib"
 ln -sfn "$sysroot/usr/include/uuid" "$support/include/uuid"
 cp alpine/execinfo.h "$support/include/execinfo.h"
@@ -53,7 +53,10 @@ cp alpine/execinfo.h "$support/include/execinfo.h"
 # executable. Its object list for that step is what gets linked below; an object missing from
 # disk means the failure was a compile error instead.
 object_list="$objects/ExampleApp.product/Objects.LinkFileList"
+# The plan is made afresh each time: in the cross builds SwiftPM's cached plan did not pick up
+# a source file added to the package the example depends on.
 swift build --swift-sdk "$arch-swift-linux-musl" --scratch-path "$scratch" --product ExampleApp \
+    --disable-build-manifest-caching \
     -Xcxx -include -Xcxx cstdint -Xcc -I"$PWD/$support/include" "$@" || true
 [[ -f "$object_list" ]] || { echo "swift build produced no object list" >&2; exit 1; }
 while read -r object; do

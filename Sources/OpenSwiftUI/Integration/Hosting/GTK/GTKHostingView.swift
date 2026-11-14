@@ -76,7 +76,7 @@ final class GTKHostingView: ViewRendererHost, ViewGraphRenderHost, EventGraphHos
         renderer.draw(displayList)
     }
 
-    func pointer(phase: OSUIPointerPhase, location: CGPoint) {
+    func pointer(phase: OSUIPointerPhase, location: CGPoint, timestamp: Time = .systemUptime) {
         let eventPhase: EventPhase
         switch phase {
         case OSUI_POINTER_BEGAN:
@@ -99,13 +99,21 @@ final class GTKHostingView: ViewRendererHost, ViewGraphRenderHost, EventGraphHos
         }
         // The responder tree hit-tests against the layout of the last evaluated graph.
         renderIfNeeded()
-        let event = MouseEvent(
-            timestamp: .systemUptime,
-            button: .primary,
+        // A touch, for the mouse too, as on iOS: DragGesture listens for touches everywhere
+        // except macOS. As in the UIKit bridge, the responder that binds the event converts
+        // the global location to its own space.
+        let event = TouchEvent(
+            timestamp: timestamp,
             phase: eventPhase,
-            location: location,
+            location: .zero,
             globalLocation: location,
-            modifiers: []
+            radius: 0,
+            force: 0,
+            maximumPossibleForce: 0,
+            modifiers: [],
+            altitude: Angle(radians: .pi / 2),
+            azimuth: .zero,
+            touchType: .direct
         )
         eventBindingManager.send(event, id: pointerSerial)
     }
@@ -155,9 +163,6 @@ final class GTKHostingView: ViewRendererHost, ViewGraphRenderHost, EventGraphHos
         maxVersion: DisplayList.Version
     ) -> Time {
         precondition(!asynchronous, "GTK presentation is main-thread only")
-        if ProcessInfo.processInfo.environment["OPENSWIFTUI_PRINT_TREE"] == "1" {
-            print("DisplayList at \(time):\n\(displayList.description)")
-        }
         self.displayList = displayList
         needsDisplay = true
         return nextTime

@@ -44,6 +44,9 @@ headers="$scratch/checkouts/Compute/Submodules/swift-runtime-headers"
 rm -f "$support/libswiftDemangle.a"
 "$toolchain/llvm-ar" rcs "$support/libswiftDemangle.a" "$support/Demangle.o"
 
+# The plan is made afresh each time: in this build SwiftPM's cached plan did not pick up a
+# source file added to the package the example depends on.
 swift build --swift-sdk aarch64-unknown-linux-gnu --scratch-path "$scratch" --static-swift-stdlib \
+    --disable-build-manifest-caching \
     -Xcxx -include -Xcxx cstdint -Xlinker -L"$PWD/$support" "$@"
 echo "$(swift build --swift-sdk aarch64-unknown-linux-gnu --scratch-path "$scratch" "$@" --show-bin-path)/ExampleApp"

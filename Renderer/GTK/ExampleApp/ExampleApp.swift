@@ -10,6 +10,20 @@ struct ExampleApp: App {
 }
 
 struct ContentView: View {
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                AnimationCard()
+                ForEach(1..<25, id: \.self) { index in
+                    Row(index: index)
+                }
+            }
+            .padding(.vertical, 16)
+        }
+    }
+}
+
+struct AnimationCard: View {
     @State private var expanded = false
     @State private var taps = 0
     @State private var bouncing = false
@@ -54,5 +68,23 @@ struct ContentView: View {
                 }
         }
         .onAppear { bouncing = true }
+    }
+}
+
+struct Row: View {
+    var index: Int
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Circle()
+                .fill(index.isMultiple(of: 2) ? Color.blue : Color.purple)
+                .frame(width: 28, height: 28)
+            Text("Row \(index)")
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 56)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.15)))
+        .padding(.horizontal, 16)
     }
 }
