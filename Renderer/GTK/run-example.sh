@@ -10,5 +10,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 source ../Stdout/configure-env.sh
 
 # Compute 0.6.4 uses std::uint64_t without <cstdint>; libstdc++ 16 no longer includes it
-# transitively.
-exec swift run -Xcxx -include -Xcxx cstdint ExampleApp "$@"
+# transitively. Without --disable-build-manifest-caching a source file added to the package
+# since the last build is not compiled.
+exec swift run --disable-build-manifest-caching -Xcxx -include -Xcxx cstdint ExampleApp "$@"

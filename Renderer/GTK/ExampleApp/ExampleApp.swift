@@ -10,15 +10,30 @@ struct ExampleApp: App {
 }
 
 struct ContentView: View {
+    @State private var path = NavigationPath()
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                AnimationCard()
-                ForEach(1..<25, id: \.self) { index in
-                    Row(index: index)
+        NavigationStack(path: $path) {
+            ScrollView {
+                VStack(spacing: 12) {
+                    AnimationCard()
+                    NavigationLink {
+                        AboutView()
+                    } label: {
+                        Row(title: "About", color: .orange)
+                    }
+                    ForEach(1..<25, id: \.self) { index in
+                        NavigationLink(value: index) {
+                            Row(title: "Row \(index)", color: index.isMultiple(of: 2) ? .blue : .purple)
+                        }
+                    }
                 }
+                .padding(.vertical, 16)
             }
-            .padding(.vertical, 16)
+            .navigationTitle("OpenSwiftUI")
+            .navigationDestination(for: Int.self) { index in
+                DetailView(index: index, path: $path)
+            }
         }
     }
 }
@@ -55,6 +70,9 @@ struct AnimationCard: View {
                 .frame(width: 48, height: 48)
                 .offset(x: bouncing ? 120 : -120)
                 .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: bouncing)
+                // Keeps the bounce apart from the animated move the circle makes when the
+                // capsule above it appears; without it that move replaces the bounce.
+                .geometryGroup()
 
             Text("Tap to animate")
                 .padding(.horizontal, 28)
@@ -72,19 +90,69 @@ struct AnimationCard: View {
 }
 
 struct Row: View {
-    var index: Int
+    var title: String
+    var color: Color
 
     var body: some View {
         HStack(spacing: 14) {
             Circle()
-                .fill(index.isMultiple(of: 2) ? Color.blue : Color.purple)
+                .fill(color)
                 .frame(width: 28, height: 28)
-            Text("Row \(index)")
+            Text(title)
             Spacer()
+            Text("›")
         }
         .padding(.horizontal, 20)
         .frame(height: 56)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.15)))
         .padding(.horizontal, 16)
+    }
+}
+
+struct PillLabel: View {
+    var title: String
+    var color: Color
+
+    var body: some View {
+        Text(title)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 14)
+            .background(Capsule().fill(color))
+    }
+}
+
+struct DetailView: View {
+    var index: Int
+    @Binding var path: NavigationPath
+    @Environment(\.dismiss) private var dismiss
+    @State private var count = 0
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Circle()
+                .fill(index.isMultiple(of: 2) ? Color.blue : Color.purple)
+                .frame(width: 96, height: 96)
+            Text("Counted \(count) on this screen")
+            PillLabel(title: "Count", color: .yellow)
+                .onTapGesture { count += 1 }
+            NavigationLink(value: index + 1) {
+                PillLabel(title: "Open row \(index + 1)", color: Color.gray.opacity(0.2))
+            }
+            PillLabel(title: "Go back", color: Color.gray.opacity(0.2))
+                .onTapGesture { dismiss() }
+            PillLabel(title: "Back to start", color: Color.gray.opacity(0.2))
+                .onTapGesture { path = NavigationPath() }
+        }
+        .navigationTitle("Row \(index)")
+    }
+}
+
+struct AboutView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("A SwiftUI app running on Linux")
+            Text("Drawn by OpenSwiftUI in a GTK window.")
+        }
+        .navigationTitle("About")
     }
 }
