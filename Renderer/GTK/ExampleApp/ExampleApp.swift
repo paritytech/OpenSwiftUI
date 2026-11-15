@@ -11,6 +11,8 @@ struct ExampleApp: App {
 
 struct ContentView: View {
     @State private var path = NavigationPath()
+    @State private var favourites: Set<Int> = []
+    @State private var showsSettings = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -22,17 +24,36 @@ struct ContentView: View {
                     } label: {
                         Row(title: "About", color: .orange)
                     }
+                    NavigationLink {
+                        TypographyView()
+                    } label: {
+                        Row(title: "Typography", color: .green)
+                    }
                     ForEach(1..<25, id: \.self) { index in
                         NavigationLink(value: index) {
-                            Row(title: "Row \(index)", color: index.isMultiple(of: 2) ? .blue : .purple)
+                            Row(
+                                title: favourites.contains(index) ? "Row \(index) ★" : "Row \(index)",
+                                color: index.isMultiple(of: 2) ? .blue : .purple
+                            )
                         }
                     }
                 }
                 .padding(.vertical, 16)
             }
             .navigationTitle("OpenSwiftUI")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Settings") { showsSettings = true }
+                }
+            }
             .navigationDestination(for: Int.self) { index in
-                DetailView(index: index, path: $path)
+                // `isFavourite` is a plain value: the stack rebuilds the screen when it changes.
+                DetailView(index: index, isFavourite: favourites.contains(index), path: $path) {
+                    favourites.formSymmetricDifference([index])
+                }
+            }
+            .navigationDestination(isPresented: $showsSettings) {
+                SettingsView()
             }
         }
     }
@@ -123,7 +144,9 @@ struct PillLabel: View {
 
 struct DetailView: View {
     var index: Int
+    var isFavourite: Bool
     @Binding var path: NavigationPath
+    var toggleFavourite: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var count = 0
 
@@ -132,6 +155,8 @@ struct DetailView: View {
             Circle()
                 .fill(index.isMultiple(of: 2) ? Color.blue : Color.purple)
                 .frame(width: 96, height: 96)
+            Text(isFavourite ? "A favourite" : "Not a favourite")
+                .foregroundStyle(.secondary)
             Text("Counted \(count) on this screen")
             PillLabel(title: "Count", color: .yellow)
                 .onTapGesture { count += 1 }
@@ -144,6 +169,57 @@ struct DetailView: View {
                 .onTapGesture { path = NavigationPath() }
         }
         .navigationTitle("Row \(index)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(isFavourite ? "★" : "☆") { toggleFavourite() }
+                    .font(.title2)
+            }
+        }
+    }
+}
+
+struct SettingsView: View {
+    @State private var colour: String?
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ForEach(["Red", "Green", "Blue"], id: \.self) { name in
+                Row(title: name, color: ColourView.color(named: name))
+                    .onTapGesture { colour = name }
+            }
+        }
+        .navigationTitle("Settings")
+        .navigationDestination(item: $colour) { name in
+            ColourView(name: name)
+        }
+        .toolbar {
+            ToolbarItem(placement: .bottomBar) {
+                Text("Three colours")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct ColourView: View {
+    var name: String
+
+    static func color(named name: String) -> Color {
+        switch name {
+        case "Red": .red
+        case "Green": .green
+        default: .blue
+        }
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 24)
+            .fill(Self.color(named: name))
+            .padding(24)
+            .navigationTitle(name)
+            .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -154,5 +230,38 @@ struct AboutView: View {
             Text("Drawn by OpenSwiftUI in a GTK window.")
         }
         .navigationTitle("About")
+    }
+}
+
+struct TypographyView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Large Title").font(.largeTitle)
+                Text("Title").font(.title)
+                Text("Title 2").font(.title2)
+                Text("Headline").font(.headline)
+                Text("Body")
+                Text("Subheadline").font(.subheadline).foregroundStyle(.secondary)
+                Text("Caption").font(.caption).foregroundStyle(.secondary)
+                Text("Bold, ").bold() + Text("italic, ").italic() + Text("red.").foregroundColor(.red)
+                Text("Serif design").font(.system(size: 20, design: .serif))
+                Text("Rounded heavy").font(.system(size: 20, weight: .heavy, design: .rounded))
+                Text("Monospaced 0123").font(.system(.body, design: .monospaced))
+                Text("Underline").underline()
+                Text("Strikethrough").strikethrough()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Colour from the container")
+                    Text("and its font").fontWeight(.light)
+                }
+                .font(.title3)
+                .foregroundStyle(.blue)
+                Text("A longer paragraph wraps onto several lines, each measured with the same font it is drawn in.")
+                    .font(.callout)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+        }
+        .navigationTitle("Typography")
     }
 }

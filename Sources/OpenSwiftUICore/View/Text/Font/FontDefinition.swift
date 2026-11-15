@@ -141,16 +141,16 @@ extension FontDefinition {
         textStyle: Font.TextStyle?,
         in context: Font.Context
     ) -> CTFontDescriptor {
-        #if canImport(CoreText)
         let newSize: CGFloat
         if _SemanticFeature_v2.isEnabled, let textStyle {
             newSize = round(Font.scaleFactor(textStyle: textStyle, in: .init(context.sizeCategory)) * size)
         } else {
             newSize = size
         }
+        #if canImport(CoreText)
         return CTFontDescriptorCreateWithNameAndSize(name as CFString, newSize)
         #else
-        _openSwiftUIPlatformUnimplementedFailure()
+        return CTFontDescriptor(family: name, size: newSize)
         #endif
     }
 }
@@ -236,7 +236,7 @@ extension FontDefinition {
         #if canImport(CoreText)
         CTFontCopyFontDescriptor(font)
         #else
-        _openSwiftUIPlatformUnimplementedFailure()
+        font.descriptor.copy()
         #endif
     }
 
@@ -249,7 +249,10 @@ extension FontDefinition {
             weight: font.weight
         )
         #else
-        _openSwiftUIPlatformUnimplementedFailure()
+        Font.ResolvedTraits(
+            pointSize: font.descriptor.size,
+            weight: font.descriptor.weight
+        )
         #endif
     }
 }
@@ -276,7 +279,12 @@ public enum DefaultFontDefinition: FontDefinition {
             legibilityWeight: context.legibilityWeight
         )
         #else
-        _openSwiftUIUnimplementedFailure()
+        let metrics = textStyle.defaultMetrics
+        return CTFontDescriptor(
+            design: design ?? .default,
+            size: (metrics.size * DynamicTypeSize(context.sizeCategory).bodySizeRatio).rounded(),
+            weight: (weight ?? metrics.weight).value
+        )
         #endif
     }
 
@@ -296,7 +304,11 @@ public enum DefaultFontDefinition: FontDefinition {
             legibilityWeight: context.legibilityWeight
         )
         #else
-        _openSwiftUIUnimplementedFailure()
+        CTFontDescriptor(
+            design: design ?? .default,
+            size: size,
+            weight: weight?.value ?? 0
+        )
         #endif
     }
 }

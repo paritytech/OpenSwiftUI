@@ -89,7 +89,8 @@ public struct DefaultButtonStyle: PrimitiveButtonStyle {
             #endif
             .buttonStyle(PlatformFallbackButtonStyle())
         #else
-        _openSwiftUIPlatformUnimplementedFailure()
+        Button(configuration)
+            .buttonStyle(BorderlessFallbackButtonStyle())
         #endif
     }
 }

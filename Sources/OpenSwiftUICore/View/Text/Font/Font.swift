@@ -66,7 +66,9 @@ public struct Font: Hashable, Sendable {
             self.weight = CTFontDescriptorGetWeight(descriptor)
             self.width = nil
             #else
-            _openSwiftUIPlatformUnimplementedFailure()
+            self.pointSize = descriptor.size
+            self.weight = descriptor.weight
+            self.width = nil
             #endif
         }
 
@@ -88,7 +90,10 @@ public struct Font: Hashable, Sendable {
             self.weight = weight?.value ?? w
             self.width = nil
             #else
-            _openSwiftUIPlatformUnimplementedFailure()
+            let metrics = textStyle.defaultMetrics
+            self.pointSize = (metrics.size * dynamicTypeSize.bodySizeRatio).rounded()
+            self.weight = (weight ?? metrics.weight).value
+            self.width = nil
             #endif
         }
 
@@ -303,7 +308,7 @@ extension Font {
             return ratio
         }
         #else
-        _openSwiftUIPlatformUnimplementedFailure()
+        category.bodySizeRatio
         #endif
     }
 }
@@ -370,21 +375,19 @@ extension Font {
 
     private static var fontCache: ObjectCache<Resolved, CTFont> = {
         let cache: ObjectCache<Resolved, CTFont> = ObjectCache { resolved in
-            #if canImport(CoreText)
             let context = resolved.context
             var descriptor = resolved.font.resolve(in: context)
             for modifier in resolved.modifiers {
                 modifier.modify(descriptor: &descriptor, in: context)
             }
+            #if canImport(CoreText)
             return CTFontCreateWithFontDescriptor(
                 descriptor,
                 0.0,
                 nil
             )
             #else
-            // No font is resolved off Darwin: the host's PlatformTextMeasurer picks the face.
-            // The placeholder only keeps text resolution from trapping.
-            return CTFont()
+            return CTFont(descriptor: descriptor)
             #endif
         }
         return cache

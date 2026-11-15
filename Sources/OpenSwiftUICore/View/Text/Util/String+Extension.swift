@@ -37,7 +37,7 @@ extension AttributedString {
 
 // MARK: - NSAttributedString.Key + Kit Extension
 
-extension NSAttributedString.Key {
+package extension NSAttributedString.Key {
     static let kitFont: NSAttributedString.Key = .init("NSFont")
 
     static let kitParagraphStyle: NSAttributedString.Key = .init("NSParagraphStyle")

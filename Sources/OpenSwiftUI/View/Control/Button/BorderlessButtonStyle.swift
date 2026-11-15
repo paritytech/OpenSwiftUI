@@ -78,7 +78,8 @@ public struct BorderlessButtonStyle: PrimitiveButtonStyle {
             .underline(showsShapes, color: controlTint)
             #endif
         #else
-        _openSwiftUIPlatformUnimplementedFailure()
+        Button(configuration)
+            .buttonStyle(BorderlessFallbackButtonStyle())
         #endif
     }
 }

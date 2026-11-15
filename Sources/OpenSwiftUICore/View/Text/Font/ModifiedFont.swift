@@ -351,7 +351,7 @@ extension Font {
                 .boldTrait,
             ) ?? descriptor
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            descriptor.weight = Font.Weight.bold.value
             #endif
         }
 
@@ -369,7 +369,7 @@ extension Font {
                 .italicTrait,
             ) ?? descriptor
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            descriptor.isItalic = true
             #endif
         }
     }
@@ -407,7 +407,8 @@ extension Font {
                 }
             }
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            descriptor.family = nil
+            descriptor.design = .monospaced
             #endif
         }
     }
@@ -424,7 +425,10 @@ extension Font {
                 0 as CFNumber
             )
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            guard !context.shouldRedactContent else {
+                return
+            }
+            descriptor.hasMonospacedDigits = true
             #endif
         }
     }
@@ -444,7 +448,7 @@ extension Font {
                 [kCTFontTraitsAttribute: traits] as CFDictionary
             )
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            descriptor.design = design
             #endif
         }
     }
@@ -473,7 +477,7 @@ extension Font {
                 mask
             ) ?? descriptor
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            descriptor.leading = leading
             #endif
         }
     }
@@ -572,7 +576,10 @@ extension Font {
                 descriptor = CTFontDescriptorCreateWithAttributes(attributes as CFDictionary)
             }
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            guard !context.shouldRedactContent else {
+                return
+            }
+            descriptor.weight = weight.value
             #endif
         }
 
@@ -614,7 +621,7 @@ extension Font {
                 descriptor = CTFontDescriptorCreateWithAttributes(attributes as CFDictionary)
             }
             #else
-            _openSwiftUIPlatformUnimplementedWarning()
+            descriptor.width = width
             #endif
         }
 

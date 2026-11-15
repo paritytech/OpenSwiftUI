@@ -25,6 +25,11 @@ public struct ScrollView<Content>: View where Content: View {
     @State private var contentSize: CGSize = .zero
     @State private var viewportSize: CGSize = .zero
     @State private var presentation = ScrollPresentation()
+    /// Set by a NavigationStack for a screen with a large title.
+    @Environment(\.navigationLargeTitle) private var largeTitle
+    /// This scroll view begins right under the space left for the large title, so it takes
+    /// the title over: it extends up into that space and draws the title above its content.
+    @State private var isUnderLargeTitle = false
 
     public init(
         _ axes: Axis.Set = .vertical,
@@ -37,11 +42,21 @@ public struct ScrollView<Content>: View where Content: View {
     }
 
     public var body: some View {
+        let title = axes.contains(.vertical) && isUnderLargeTitle ? largeTitle : nil
+        let titleHeight = title?.height ?? 0
         content
+            .environment(\.navigationLargeTitle, nil)
+            .padding(.top, titleHeight)
+            .overlay(title.map { NavigationLargeTitleView(title: $0.title) }, alignment: .top)
             // The scroll axes get no size limit; the other axis keeps the viewport's.
             .fixedSize(horizontal: axes.contains(.horizontal), vertical: axes.contains(.vertical))
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { contentSize = $0 }
-            .modifier(ScrollOffsetModifier(offset: offset, presentation: presentation))
+            .modifier(ScrollOffsetModifier(
+                offset: offset,
+                presentation: presentation,
+                // The title counts as gone a little before its last pixels are.
+                titleCollapse: title.map { $0.height - 12 }
+            ))
             // A flexible frame is never smaller than its content unless the minimum says so;
             // with it, the viewport is exactly what the parent proposes.
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
@@ -56,6 +71,13 @@ public struct ScrollView<Content>: View where Content: View {
                     jump(to: offset.clamped(to: limit))
                 }
             }
+            .padding(.top, -titleHeight)
+            // Measured outside the padding, so taking the title over does not change it.
+            .onGeometryChange(for: Bool.self, of: { [largeTitle] proxy in
+                guard let largeTitle else { return false }
+                return abs(proxy.frame(in: .global).minY - (largeTitle.top + largeTitle.height)) < 1
+            }) { isUnderLargeTitle = $0 }
+            .preference(key: NavigationScrollShowsTitleKey.self, value: title != nil)
     }
 
     /// The farthest the content can scroll on each axis.
@@ -157,6 +179,8 @@ private final class ScrollPresentation {
 private struct ScrollOffsetModifier: ViewModifier, Animatable {
     var offset: CGSize
     let presentation: ScrollPresentation
+    /// How far the content scrolls before a large title above it is out of sight.
+    var titleCollapse: CGFloat?
 
     var animatableData: CGSize.AnimatableData {
         get { offset.animatableData }
@@ -166,7 +190,9 @@ private struct ScrollOffsetModifier: ViewModifier, Animatable {
     func body(content: Content) -> some View {
         // Evaluated for every animation frame with the interpolated offset.
         presentation.offset = offset
-        return content.offset(x: -offset.width, y: -offset.height)
+        return content
+            .offset(x: -offset.width, y: -offset.height)
+            .preference(key: NavigationTitleCollapsedKey.self, value: titleCollapse.map { offset.height >= $0 } ?? false)
     }
 }
 

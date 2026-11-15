@@ -152,7 +152,12 @@ package struct ResetPositionTransform: Rule, AsyncAttribute {
     }
 
     package var value: ViewTransform {
-        transform.withPosition(position)
+        // The children start again from the origin, so the transform must not keep this
+        // position as an adjustment to theirs; with `withPosition` it did, and every hit
+        // test inside a geometry group was off by the group's position.
+        var transform = transform
+        transform.resetPosition(position)
+        return transform
     }
 }
 
