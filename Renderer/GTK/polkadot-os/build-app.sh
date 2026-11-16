@@ -15,7 +15,7 @@
 # The program is built for Alpine 3.22 and musl, and links Swift's runtime into itself. Of the
 # phone it needs the packages gtk4.0 and libstdc++, and a font.
 #
-# On a phone, for one user (the folder above apps/ has to stay mode 700):
+# On a phone, for one user:
 #
 #   sudo apk add gtk4.0 libstdc++
 #   mkdir -p ~/.local/share/polkadot-os/apps
