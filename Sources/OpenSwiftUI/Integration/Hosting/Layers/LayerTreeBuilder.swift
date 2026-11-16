@@ -36,6 +36,11 @@ final class LayerTreeBuilder {
         /// has scrolled to.
         var scrolling: (contentSize: CGSize, axes: Axis.Set)?
         var scrollHandle: CompositorScrollHandle?
+        /// The animations the compositor is running for this layer, by the seed of their
+        /// description; see `AnimationSamples`. While one runs, the property is the
+        /// compositor's and what the app samples for it is ignored.
+        var positionSeed: UInt32?
+        var opacitySeed: UInt32?
 
         init(layer: CALayer) {
             self.layer = layer
@@ -122,7 +127,9 @@ final class LayerTreeBuilder {
     }
 
     /// Every property the builder ever sets, each given once, so a layer that an item takes
-    /// over from another keeps nothing of its past.
+    /// over from another keeps nothing of its past. `ahead` is the description of the
+    /// item's animations, if they are to be the compositor's; `origin` is the item origin
+    /// that `position` was worked out from, and `fades` says the item is an opacity effect.
     private func configure(
         _ entry: Entry,
         bounds: CGRect,
@@ -133,15 +140,18 @@ final class LayerTreeBuilder {
         opacity: Float = 1,
         transform: LayerKit.CGAffineTransform = .identity,
         contents: CGImage? = nil,
-        contentsScale: CGFloat = 1
+        contentsScale: CGFloat = 1,
+        ahead: DisplayList.Ahead? = nil,
+        origin: CGPoint = .zero,
+        fades: Bool = false
     ) {
         let layer = entry.layer
         layer.bounds = bounds
-        layer.position = position
+        place(entry, at: position, origin: origin, track: ahead?.origin)
         layer.backgroundColor = background
         layer.cornerRadius = cornerRadius
         layer.masksToBounds = clips
-        layer.opacity = opacity
+        fade(entry, to: opacity, track: fades ? ahead?.effect : nil)
         layer.setAffineTransform(transform)
         layer.contentsScale = contentsScale
         layer.contents = contents
@@ -151,6 +161,70 @@ final class LayerTreeBuilder {
         }
     }
 
+    // MARK: Animations
+
+    private static let positionKey = "described.position"
+    private static let opacityKey = "described.opacity"
+
+    /// Puts the layer at `position`, or, when its way there is described, has the
+    /// compositor take it there. The layer's model value is where it comes to rest, so
+    /// nothing moves when the animation ends.
+    private func place(_ entry: Entry, at position: CGPoint, origin: CGPoint, track: DisplayList.Ahead.Track<CGPoint>?) {
+        let layer = entry.layer
+        guard let track else {
+            if entry.positionSeed != nil {
+                entry.positionSeed = nil
+                layer.removeAnimation(forKey: Self.positionKey)
+            }
+            layer.position = position
+            return
+        }
+        guard entry.positionSeed != track.seed else {
+            return
+        }
+        entry.positionSeed = track.seed
+        // The layer is a fixed distance from the item's origin.
+        let points = track.values().map {
+            CGPoint(x: $0.x + position.x - origin.x, y: $0.y + position.y - origin.y)
+        }
+        layer.position = points.last ?? position
+        animate(layer, keyPath: "position", key: Self.positionKey, values: points, step: track.step)
+    }
+
+    private func fade(_ entry: Entry, to opacity: Float, track: DisplayList.Ahead.Track<DisplayList.Effect>?) {
+        let layer = entry.layer
+        guard let track else {
+            if entry.opacitySeed != nil {
+                entry.opacitySeed = nil
+                layer.removeAnimation(forKey: Self.opacityKey)
+            }
+            layer.opacity = opacity
+            return
+        }
+        guard entry.opacitySeed != track.seed else {
+            return
+        }
+        entry.opacitySeed = track.seed
+        let opacities = track.values().map { effect -> Float in
+            if case let .opacity(value) = effect { value } else { opacity }
+        }
+        layer.opacity = opacities.last ?? opacity
+        animate(layer, keyPath: "opacity", key: Self.opacityKey, values: opacities, step: track.step)
+    }
+
+    /// Replaces the animation under `key` with one through `values`, `step` seconds apart.
+    private func animate(_ layer: CALayer, keyPath: String, key: String, values: [Any], step: Double) {
+        guard values.count > 1 else {
+            layer.removeAnimation(forKey: key)
+            return
+        }
+        let animation = CAKeyframeAnimation(keyPath: keyPath)
+        animation.values = values
+        animation.duration = Double(values.count - 1) * step
+        animation.calculationMode = .linear
+        layer.add(animation, forKey: key)
+    }
+
     // MARK: Content
 
     private func contentLayer(_ content: DisplayList.Content, item: DisplayList.Item) -> CALayer? {
@@ -158,7 +232,10 @@ final class LayerTreeBuilder {
         switch content.value {
         case let .color(color):
             let entry = entry(for: item)
-            configure(entry, bounds: CGRect(origin: .zero, size: frame.size), position: frame.origin, background: cgColor(color))
+            configure(
+                entry, bounds: CGRect(origin: .zero, size: frame.size), position: frame.origin,
+                background: cgColor(color), ahead: item.ahead, origin: frame.origin
+            )
             setSublayers(of: entry.layer, to: [])
             return entry.layer
         case let .shape(path, paint, _):
@@ -167,7 +244,10 @@ final class LayerTreeBuilder {
             return textLayer(view, size: size, item: item)
         case let .flattened(list, offset, _):
             let entry = entry(for: item)
-            configure(entry, bounds: .zero, position: CGPoint(x: frame.minX + offset.x, y: frame.minY + offset.y))
+            configure(
+                entry, bounds: .zero, position: CGPoint(x: frame.minX + offset.x, y: frame.minY + offset.y),
+                ahead: item.ahead, origin: frame.origin
+            )
             setSublayers(of: entry.layer, to: layers(for: list))
             return entry.layer
         case .shadow:
@@ -206,7 +286,10 @@ final class LayerTreeBuilder {
         let cornerRadius = min(radius, min(rect.width, rect.height) / 2)
         switch visitor.paint {
         case let .color(color):
-            configure(entry, bounds: bounds, position: position, background: cgColor(color), cornerRadius: cornerRadius)
+            configure(
+                entry, bounds: bounds, position: position, background: cgColor(color), cornerRadius: cornerRadius,
+                ahead: item.ahead, origin: item.position
+            )
         case let .linearGradient(gradient, start, end):
             let key = GradientKey(
                 stops: gradient.stops.flatMap { [Float($0.location), $0.color.red, $0.color.green, $0.color.blue, $0.color.opacity] },
@@ -216,7 +299,10 @@ final class LayerTreeBuilder {
             )
             let image = entry.gradient == key ? entry.layer.contents as? CGImage : gradientImage(key)
             // The image is stretched over the layer; the clip rounds it.
-            configure(entry, bounds: bounds, position: position, cornerRadius: cornerRadius, clips: true, contents: image)
+            configure(
+                entry, bounds: bounds, position: position, cornerRadius: cornerRadius, clips: true, contents: image,
+                ahead: item.ahead, origin: item.position
+            )
             entry.gradient = key
             entry.text = nil
         case nil:
@@ -315,7 +401,9 @@ final class LayerTreeBuilder {
             bounds: CGRect(x: 0, y: 0, width: CGFloat(pixelWidth) / scale, height: CGFloat(pixelHeight) / scale),
             position: CGPoint(x: item.frame.minX - margin, y: item.frame.minY - margin),
             contents: image,
-            contentsScale: scale
+            contentsScale: scale,
+            ahead: item.ahead,
+            origin: item.position
         )
         entry.text = (item.version, size)
         entry.gradient = nil
@@ -334,9 +422,12 @@ final class LayerTreeBuilder {
         var cornerRadius: CGFloat = 0
         var clips = false
         var opacity: Float = 1
+        var fades = false
         var transform = LayerKit.CGAffineTransform.identity
+        var ahead = item.ahead
         switch effect {
         case let .opacity(alpha):
+            fades = true
             opacity = alpha
         case let .clip(path, _, _):
             switch path.storage {
@@ -373,17 +464,19 @@ final class LayerTreeBuilder {
             // layer around it does the scrolling, so the content itself stays put: it is
             // where the compositor has it, whatever the app last knew.
             origin = .zero
+            ahead = nil
         default:
             // Groups and bookkeeping effects change nothing that is drawn. One that also
-            // moves nothing needs no layer of its own.
-            if position == .zero {
+            // moves nothing, now or on its way, needs no layer of its own.
+            if position == .zero, ahead?.origin == nil {
                 return layers(for: list)
             }
         }
         let entry = entry(for: item)
         configure(
             entry, bounds: bounds, position: origin,
-            cornerRadius: cornerRadius, clips: clips, opacity: opacity, transform: transform
+            cornerRadius: cornerRadius, clips: clips, opacity: opacity, transform: transform,
+            ahead: ahead, origin: position, fades: fades
         )
         setSublayers(of: entry.layer, to: layers(for: list))
         return [entry.layer]

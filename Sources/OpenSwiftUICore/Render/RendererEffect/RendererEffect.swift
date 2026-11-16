@@ -38,9 +38,12 @@ extension _RendererEffect {
 
     package var scrapeableContent: ScrapeableContent.Content? { nil }
 
+    /// `effectAhead` gives the values an animation of the effect will take, when one is
+    /// under way and described; see `AnimationSamples`.
     package static func _makeRendererEffect(
         effect: _GraphValue<Self>,
         inputs: _ViewInputs,
+        effectAhead: ((Self, CGSize) -> DisplayList.Ahead.Track<DisplayList.Effect>?)? = nil,
         body: @escaping (_Graph, _ViewInputs) -> _ViewOutputs
     ) -> _ViewOutputs {
         var newInputs = inputs
@@ -72,18 +75,21 @@ extension _RendererEffect {
                 newInputs.containerPosition = origin
                 newInputs.size = roundedSize
             } else {
-                newInputs.containerPosition = inputs.animatedPosition()
+                let (position, samples) = inputs.animatedPositionAndSamples()
+                newInputs.containerPosition = position
+                newInputs.containerPositionSamples = (position.identifier, samples)
             }
         }
         var outputs = body(_Graph(), newInputs)
         if inputs.preferences.requiresDisplayList {
             let identity = DisplayList.Identity()
             inputs.pushIdentity(identity)
+            let (position, positionSamples) = inputs.describedAnimatedPosition()
             let displayList = Attribute(
                 RendererEffectDisplayList(
                     identity: identity,
                     effect: effect.value,
-                    position: inputs.animatedPosition(),
+                    position: position,
                     size: inputs.animatedSize(),
                     transform: inputs.transform,
                     containerPosition: inputs.containerPosition,
@@ -92,7 +98,9 @@ extension _RendererEffect {
                     content: .init(outputs.displayList),
                     options: inputs.displayListOptions,
                     localID: scrapeableID,
-                    parentID: inputs.scrapeableParentID
+                    parentID: inputs.scrapeableParentID,
+                    positionSamples: positionSamples,
+                    effectAhead: effectAhead
                 )
             )
             if isScrapeable, inputs.isScrapeable {
@@ -119,8 +127,25 @@ extension RendererEffect {
             return body(_Graph(), inputs)
         }
         var effect = effect
-        _makeAnimatable(value: &effect, inputs: inputs.base)
-        return _makeRendererEffect(effect: effect, inputs: inputs, body: body)
+        let samples = AnimationSamplesBox<AnimatableData>()
+        makeAnimatable(value: &effect, inputs: inputs.base, samples: samples)
+        return _makeRendererEffect(
+            effect: effect,
+            inputs: inputs,
+            effectAhead: { effect, size in
+                guard let samples = samples.samples else {
+                    return nil
+                }
+                return DisplayList.Ahead.Track(seed: samples.seed, step: samples.step) {
+                    samples.values.map { data in
+                        var effect = effect
+                        effect.animatableData = data
+                        return effect.effectValue(size: size)
+                    }
+                }
+            },
+            body: body
+        )
     }
 
     nonisolated public static func _makeView(
@@ -176,6 +201,8 @@ private struct RendererEffectDisplayList<Effect>: Rule, AsyncAttribute, Scrapeab
     let options: DisplayList.Options
     let localID: ScrapeableID
     let parentID: ScrapeableID
+    let positionSamples: PositionSamples?
+    let effectAhead: ((Effect, CGSize) -> DisplayList.Ahead.Track<DisplayList.Effect>?)?
 
     var value: DisplayList {
         let content = content ?? .init()
@@ -194,12 +221,14 @@ private struct RendererEffectDisplayList<Effect>: Rule, AsyncAttribute, Scrapeab
         )
 
         let e: DisplayList.Effect
+        var effectTrack: DisplayList.Ahead.Track<DisplayList.Effect>?
         if Effect.disabledForFlattenedContent, content.features.contains(.flattened) {
             e = .identity
         } else {
             e = proxy.asCurrent {
                 effect.effectValue(size: size.value)
             }
+            effectTrack = effectAhead?(effect, size.value)
         }
         let frame = CGRect(
             origin: CGPoint(position - containerPosition),
@@ -211,7 +240,19 @@ private struct RendererEffectDisplayList<Effect>: Rule, AsyncAttribute, Scrapeab
             identity: identity,
             version: version
         )
-        item.canonicalize(options: options)
+        item.ahead = DisplayList.Ahead(
+            origin: DisplayList.Ahead.origin(
+                positionSamples,
+                offset: frame.origin - position,
+                containerPosition: containerPosition
+            ),
+            effect: effectTrack
+        )
+        // While the effect is animated by the host the item stays an effect, even at a
+        // value that does nothing, so that the host has something to animate.
+        if effectTrack == nil {
+            item.canonicalize(options: options)
+        }
         return DisplayList(item)
     }
 

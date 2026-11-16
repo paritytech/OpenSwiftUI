@@ -21,11 +21,13 @@ package struct AnimatableAttribute<Value>: StatefulRule, AsyncAttribute, Observe
         phase: Attribute<_GraphInputs.Phase>,
         time: Attribute<Time>,
         transaction: Attribute<Transaction>,
-        environment: Attribute<EnvironmentValues>
+        environment: Attribute<EnvironmentValues>,
+        samples: AnimationSamplesBox<Value.AnimatableData>? = nil
     ) {
         _source = source
         _environment = environment
         helper = .init(phase: phase, time: time, transaction: transaction)
+        helper.samplesBox = samples
     }
 
     package mutating func updateValue() {
@@ -75,13 +77,15 @@ package struct AnimatableFrameAttribute: StatefulRule, AsyncAttribute, ObservedA
         phase: Attribute<_GraphInputs.Phase>,
         time: Attribute<Time>,
         transaction: Attribute<Transaction>,
-        animationsDisabled: Bool
+        animationsDisabled: Bool,
+        samples: AnimationSamplesBox<ViewFrame.AnimatableData>? = nil
     ) {
         _position = position
         _size = size
         _pixelLength = pixelLength
         _environment = environment
         helper = .init(phase: phase, time: time, transaction: transaction)
+        helper.samplesBox = samples
         self.animationsDisabled = animationsDisabled
     }
 
@@ -149,13 +153,15 @@ package struct AnimatableFrameAttributeVFD: StatefulRule, AsyncAttribute, Observ
         phase: Attribute<_GraphInputs.Phase>,
         time: Attribute<Time>,
         transaction: Attribute<Transaction>,
-        animationsDisabled: Bool
+        animationsDisabled: Bool,
+        samples: AnimationSamplesBox<ViewFrame.AnimatableData>? = nil
     ) {
         _position = position
         _size = size
         _pixelLength = pixelLength
         _environment = environment
         helper = .init(phase: phase, time: time, transaction: transaction)
+        helper.samplesBox = samples
         velocityFilter = FrameVelocityFilter()
         self.animationsDisabled = animationsDisabled
     }
@@ -212,6 +218,16 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
     private var animatorState: AnimatorState<Value.AnimatableData>? = nil
 
     private var resetSeed: UInt32 = 0
+
+    /// Where the running animation is described for a host that runs animations by itself;
+    /// see `AnimationSamples`. Nil when nothing shows this value in a way a host could animate.
+    package var samplesBox: AnimationSamplesBox<Value.AnimatableData>? = nil
+
+    /// What the description in `samplesBox` was made from: it is made again when the
+    /// animation changes course or the value it is heading for changes.
+    private var described: (generation: UInt32, target: Value.AnimatableData)? = nil
+
+    private var samplesSeed: UInt32 = 0
 
     package init(
         phase: Attribute<_GraphInputs.Phase>,
@@ -336,6 +352,39 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
             environment: environment,
             sampleCollector: sampleCollector
         )
+        describeIfNeeded(environment: environment)
+    }
+
+    private mutating func describeIfNeeded(environment: Attribute<EnvironmentValues>) {
+        guard let samplesBox else {
+            return
+        }
+        guard let animatorState, let target = previousModelData else {
+            samplesBox.samples = nil
+            described = nil
+            return
+        }
+        if let described, described.generation == animatorState.generation, described.target == target {
+            return
+        }
+        described = (animatorState.generation, target)
+        let isWanted = Graph.withoutUpdate { environment.value.animationsAreDescribed }
+        guard isWanted, let values = animatorState.valuesAhead(
+            target: target,
+            step: AnimationSamples<Value.AnimatableData>.step,
+            limit: AnimationSamples<Value.AnimatableData>.limit,
+            environment: environment
+        ) else {
+            samplesBox.samples = nil
+            return
+        }
+        samplesSeed &+= 1
+        samplesBox.samples = AnimationSamples(
+            seed: samplesSeed,
+            time: Graph.withoutUpdate { time },
+            step: AnimationSamples<Value.AnimatableData>.step,
+            values: values
+        )
     }
 
     package mutating func update(
@@ -365,6 +414,8 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
         animatorState = nil
         previousModelData = nil
         resetSeed = phase.resetSeed
+        samplesBox?.samples = nil
+        described = nil
     }
 
     package mutating func removeListeners() {
@@ -388,6 +439,12 @@ final package class AnimatorState<V> where V: VectorArithmetic {
     private var nextTime: Time = .zero
 
     private var previousAnimationValue: V = .zero
+
+    /// Changes whenever the animation changes course.
+    package private(set) var generation: UInt32 = 0
+
+    /// How far into the animation it was last evaluated.
+    private var evaluatedElapsed: Double = 0
 
     private var reason: UInt32? = nil
 
@@ -502,6 +559,7 @@ final package class AnimatorState<V> where V: VectorArithmetic {
         in transaction: Transaction,
         environment: Attribute<EnvironmentValues>?
     ) {
+        generation &+= 1
         if phase == .pending, !Semantics.MergeCoincidentAnimations.isEnabled {
             animation = newAnimation
             interval = newInterval
@@ -588,6 +646,7 @@ final package class AnimatorState<V> where V: VectorArithmetic {
             break
         }
         let elapsed = time - beginTime
+        evaluatedElapsed = elapsed
         var context = AnimationContext(
             state: state,
             environment: environment,
@@ -614,6 +673,38 @@ final package class AnimatorState<V> where V: VectorArithmetic {
             nextTime = Time(seconds: (floor(time.seconds / quantizedFrameInterval) + 1.0) * quantizedFrameInterval)
         }
         return false
+    }
+
+    /// The values the animation will take from where it was last evaluated, `step` seconds
+    /// apart and ending with `target`, the value it is heading for. Nil when it does not end
+    /// within `limit` values. Nothing about the animation changes.
+    package func valuesAhead(
+        target: V,
+        step: Double,
+        limit: Int,
+        environment: Attribute<EnvironmentValues>?
+    ) -> [V]? {
+        var context = AnimationContext(
+            state: state,
+            environment: environment,
+            isLogicallyComplete: isLogicallyComplete
+        )
+        var values: [V] = []
+        for index in 0 ..< limit {
+            guard let animated = animation.animate(
+                value: interval,
+                time: evaluatedElapsed + Double(index) * step,
+                context: &context
+            ) else {
+                values.append(target)
+                return values
+            }
+            var value = target
+            value += animated
+            value -= interval
+            values.append(value)
+        }
+        return nil
     }
 
     package func nextUpdate() {

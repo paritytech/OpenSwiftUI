@@ -82,17 +82,21 @@ extension ShapeStyledLeafView {
         }
     }
 
+    /// `positionSamples` describes an animation that `inputs.position` has already been
+    /// through; without it, the view's own position animation is the one described.
     package static func makeLeafView(
         view: _GraphValue<Self>,
         inputs: _ViewInputs,
         styles: Attribute<ShapeStyle.Pack>,
         interpolatorGroup: ShapeStyle.InterpolatorGroup? = nil,
-        data: ShapeUpdateData
+        data: ShapeUpdateData,
+        positionSamples: PositionSamples? = nil
     ) -> _ViewOutputs {
         var outputs = _ViewOutputs()
         if inputs.preferences.requiresDisplayList {
             let identity = DisplayList.Identity()
             inputs.pushIdentity(identity)
+            let (position, ownPositionSamples) = inputs.describedAnimatedPosition()
             let displayList = ShapeStyledDisplayList(
                 group: interpolatorGroup,
                 identity: identity,
@@ -100,14 +104,15 @@ extension ShapeStyledLeafView {
                 styles: styles,
                 size: inputs.size.cgSize,
                 animatedSize: inputs.animatedSize(),
-                position: inputs.animatedPosition(),
+                position: position,
                 containerPosition: inputs.containerPosition,
                 transform: inputs.transform,
                 environment: inputs.environment,
                 safeAreaInsets: inputs.safeAreaInsets,
                 options: inputs.displayListOptions,
                 data: data,
-                contentSeed: .init()
+                contentSeed: .init(),
+                positionSamples: positionSamples ?? ownPositionSamples
             )
             outputs.displayList = Attribute(displayList)
         }
@@ -138,14 +143,16 @@ extension ShapeStyledLeafView where ShapeUpdateData == () {
         view: _GraphValue<Self>,
         inputs: _ViewInputs,
         styles: Attribute<ShapeStyle.Pack>,
-        interpolatorGroup: ShapeStyle.InterpolatorGroup? = nil
+        interpolatorGroup: ShapeStyle.InterpolatorGroup? = nil,
+        positionSamples: PositionSamples? = nil
     ) -> _ViewOutputs {
         makeLeafView(
             view: view,
             inputs: inputs,
             styles: styles,
             interpolatorGroup: interpolatorGroup,
-            data: ()
+            data: (),
+            positionSamples: positionSamples
         )
     }
 }
@@ -228,6 +235,7 @@ struct ShapeStyledDisplayList<V>: StatefulRule, AsyncAttribute where V: ShapeSty
     let options: DisplayList.Options
     let data: V.ShapeUpdateData
     var contentSeed: DisplayList.Seed
+    let positionSamples: PositionSamples?
 
     init(
         group: ShapeStyle.InterpolatorGroup?,
@@ -243,8 +251,10 @@ struct ShapeStyledDisplayList<V>: StatefulRule, AsyncAttribute where V: ShapeSty
         safeAreaInsets: OptionalAttribute<SafeAreaInsets>,
         options: DisplayList.Options,
         data: V.ShapeUpdateData,
-        contentSeed: DisplayList.Seed
+        contentSeed: DisplayList.Seed,
+        positionSamples: PositionSamples?
     ) {
+        self.positionSamples = positionSamples
         self.group = group
         self.identity = identity
         self._view = view
@@ -336,6 +346,19 @@ struct ShapeStyledDisplayList<V>: StatefulRule, AsyncAttribute where V: ShapeSty
             styles: $styles,
             layers: &layers
         )
-        value = layers.commit(shape: &renderedShape, options: options)
+        var list = layers.commit(shape: &renderedShape, options: options)
+        if positionSamples?.own.samples != nil {
+            list.describe { item in
+                DisplayList.Ahead(
+                    origin: DisplayList.Ahead.origin(
+                        positionSamples,
+                        offset: item.frame.origin - position,
+                        containerPosition: containerPosition
+                    ),
+                    effect: nil
+                )
+            }
+        }
+        value = list
     }
 }

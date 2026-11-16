@@ -36,15 +36,17 @@ extension RendererLeafView {
         if inputs.preferences.requiresDisplayList {
             let identity = DisplayList.Identity()
             inputs.pushIdentity(identity)
+            let (position, positionSamples) = inputs.describedAnimatedPosition()
             outputs.preferences.displayList = Attribute(
                 LeafDisplayList(
                     identity: identity,
                     view: view.value,
-                    position: inputs.animatedPosition(),
+                    position: position,
                     size: inputs.animatedCGSize(),
                     containerPosition: inputs.containerPosition,
                     options: inputs.displayListOptions,
-                    contentSeed: .init()
+                    contentSeed: .init(),
+                    positionSamples: positionSamples
                 )
             )
         }
@@ -132,6 +134,7 @@ private struct LeafDisplayList<V>: StatefulRule, CustomStringConvertible where V
     @Attribute var containerPosition: ViewOrigin
     let options: DisplayList.Options
     var contentSeed: DisplayList.Seed
+    let positionSamples: PositionSamples?
 
     typealias Value = DisplayList
 
@@ -146,14 +149,20 @@ private struct LeafDisplayList<V>: StatefulRule, CustomStringConvertible where V
         if viewChanged {
             contentSeed = .init(version)
         }
+        let origin = CGPoint(position - containerPosition)
         var item = DisplayList.Item(
             .content(DisplayList.Content(content, seed: contentSeed)),
-            frame: CGRect(
-                origin: CGPoint(position - containerPosition),
-                size: size
-            ),
+            frame: CGRect(origin: origin, size: size),
             identity: identity,
             version: version
+        )
+        item.ahead = DisplayList.Ahead(
+            origin: DisplayList.Ahead.origin(
+                positionSamples,
+                offset: origin - position,
+                containerPosition: containerPosition
+            ),
+            effect: nil
         )
         item.canonicalize(options: options)
         value = DisplayList(item)

@@ -68,6 +68,16 @@ extension Attribute where Value: Animatable {
 @available(OpenSwiftUI_v1_0, *)
 extension Animatable {
     public static func _makeAnimatable(value: inout _GraphValue<Self>, inputs: _GraphInputs) {
+        makeAnimatable(value: &value, inputs: inputs, samples: nil)
+    }
+
+    /// Makes `value` animated, leaving a description of the animation it is running in
+    /// `samples` for a host that runs animations by itself; see `AnimationSamples`.
+    package static func makeAnimatable(
+        value: inout _GraphValue<Self>,
+        inputs: _GraphInputs,
+        samples: AnimationSamplesBox<AnimatableData>?
+    ) {
         guard MemoryLayout<AnimatableData>.size != 0,
               !inputs.animationsDisabled else {
             return
@@ -77,7 +87,8 @@ extension Animatable {
             phase: inputs.phase,
             time: inputs.time,
             transaction: inputs.transaction,
-            environment: inputs.environment
+            environment: inputs.environment,
+            samples: samples
         )
         let newValue = _GraphValue(animatable)
         value = newValue

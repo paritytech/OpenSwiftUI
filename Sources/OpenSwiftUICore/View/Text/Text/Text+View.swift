@@ -307,14 +307,18 @@ package struct StyledTextContentView: UnaryView, PrimitiveView, ShapeStyledLeafV
                 outputs = .init()
             } else {
                 let group = _ShapeStyle_InterpolatorGroup()
+                var positionSamples: PositionSamples?
                 if inputs.needsGeometry {
-                    newInputs.position = inputs.animatedPosition()
+                    let described = inputs.describedAnimatedPosition()
+                    newInputs.position = described.position
+                    positionSamples = described.samples
                 }
                 outputs = makeLeafView(
                     view: view,
                     inputs: newInputs,
                     styles: shapeStyles,
-                    interpolatorGroup: group
+                    interpolatorGroup: group,
+                    positionSamples: positionSamples
                 )
                 // TODO: outputs.applyInterpolatorGroup
             }

@@ -139,16 +139,18 @@ extension GeometryEffectProvider {
         if inputs.preferences.requiresDisplayList {
             let identity = DisplayList.Identity()
             inputs.pushIdentity(identity)
+            let (position, positionSamples) = inputs.describedAnimatedPosition()
             let displayList = Attribute(
                 GeometryEffectDisplayList<Self>(
                     identity: .init(),
                     effect: animatableEffect,
-                    position: inputs.animatedPosition(),
+                    position: position,
                     size: inputs.animatedCGSize(), // Verify: Still get a new size here
                     layoutDirection: inputs.layoutDirection,
                     containerPosition: inputs.containerPosition,
                     content: .init(outputs.preferences.displayList),
-                    options: .init()
+                    options: .init(),
+                    positionSamples: positionSamples
                 )
             )
             outputs.displayList = displayList
@@ -257,6 +259,7 @@ private struct GeometryEffectDisplayList<Provider>: Rule, AsyncAttribute, Custom
     @Attribute var containerPosition: CGPoint
     @OptionalAttribute var content: DisplayList?
     let options: DisplayList.Options
+    let positionSamples: PositionSamples?
 
     var value: DisplayList {
         let content = content ?? DisplayList()
@@ -275,6 +278,14 @@ private struct GeometryEffectDisplayList<Provider>: Rule, AsyncAttribute, Custom
             frame: CGRect(origin: origin, size: size),
             identity: identity,
             version: .init(forUpdate: ())
+        )
+        item.ahead = DisplayList.Ahead(
+            origin: DisplayList.Ahead.origin(
+                positionSamples,
+                offset: origin - position,
+                containerPosition: containerPosition
+            ),
+            effect: nil
         )
         item.canonicalize(options: options)
         return DisplayList(item)

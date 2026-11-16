@@ -8,8 +8,12 @@
 //  touches.
 //
 //  Scrolling is the compositor's: a scroll view's viewport becomes a scroll layer that the
-//  compositor moves under a touch by itself (CompositorScrolling.swift). Other animations
-//  are still evaluated here, frame by frame, so a busy app still stutters in those.
+//  compositor moves under a touch by itself (CompositorScrolling.swift). So are the
+//  animations the engine can describe ahead of time (AnimationSamples.swift): where an item
+//  is and how opaque it is. Everything else that changes over time is still evaluated here,
+//  frame by frame, and stops while the app is busy.
+//
+//  OPENSWIFTUI_LAYER_ANIMATIONS=app keeps every animation in the app, to compare.
 
 #if OPENSWIFTUI_LAYERS
 import COpenSwiftUIGTKHost
@@ -33,6 +37,7 @@ func runLayerApp(_ item: SceneList.Item) -> Never {
     let screen = layerHost.size
     var environment = item.environment
     environment.compositorScrolls = true
+    environment.animationsAreDescribed = ProcessInfo.processInfo.environment["OPENSWIFTUI_LAYER_ANIMATIONS"] != "app"
     let host = GTKHostingView(rootView: item.value.view, environment: environment)
     host.resize(width: Int(screen.width), height: Int(screen.height), scale: Double(layerHost.scale))
 

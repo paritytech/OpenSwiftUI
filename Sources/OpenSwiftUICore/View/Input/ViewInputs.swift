@@ -73,6 +73,14 @@ public struct _ViewInputs {
     }
     
     package var containerPosition: Attribute<ViewOrigin>
+
+    /// Where the animation of `containerPosition` is described, for whoever set it to an
+    /// animated position and said so. It names the attribute it is about, so that it counts
+    /// for nothing once `containerPosition` has been set to something else.
+    package var containerPositionSamples: (
+        position: AnyAttribute,
+        samples: AnimationSamplesBox<ViewFrame.AnimatableData>?
+    )? = nil
     
     package var size: Attribute<ViewSize> {
         didSet {

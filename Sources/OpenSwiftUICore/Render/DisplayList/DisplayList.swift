@@ -99,6 +99,13 @@ package struct DisplayList: Equatable {
         features.formUnion(item.features)
         properties.formUnion(item.properties)
     }
+
+    /// Says what will happen to each of the list's own items; see `Ahead`.
+    package mutating func describe(_ ahead: (Item) -> Ahead?) {
+        for index in items.indices {
+            items[index].ahead = ahead(items[index])
+        }
+    }
     
     package mutating func append(contentsOf other: DisplayList) {
         for item in other.items {
@@ -261,6 +268,10 @@ extension DisplayList {
         package var value: Item.Value
 
         package var identity: Identity
+
+        /// What will happen to the item, for a host that runs animations by itself. Nil
+        /// unless such a host asked and an animation of the item is under way.
+        package var ahead: Ahead?
 
         package enum Value {
             case empty
@@ -851,6 +862,7 @@ extension DisplayList.Item {
             return
         }
         let item = list.items[0]
+        ahead = DisplayList.Ahead.merging(ahead, at: frame.origin, with: item.ahead, at: item.frame.origin)
         frame = item.frame.offset(by: CGSize(frame.origin))
         version.combine(with: item.version)
         value = item.value

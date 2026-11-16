@@ -113,6 +113,17 @@ extension CachedEnvironment {
         return withAnimatedFrame(for: inputs) { $0.animatedPosition() }
     }
 
+    /// The animated position, and where the animation it is running is described. The two
+    /// come from one call because a later call may be answered by a different attribute.
+    package mutating func animatedPositionAndSamples(
+        for inputs: _ViewInputs
+    ) -> (position: Attribute<ViewOrigin>, samples: AnimationSamplesBox<ViewFrame.AnimatableData>?) {
+        guard inputs.needsGeometry else {
+            return (inputs.position, nil)
+        }
+        return withAnimatedFrame(for: inputs) { ($0.animatedPosition(), $0.samples) }
+    }
+
     package mutating func animatedSize(for inputs: _ViewInputs) -> Attribute<ViewSize> {
         guard inputs.needsGeometry else {
             return inputs.size
@@ -164,6 +175,7 @@ extension CachedEnvironment.AnimatedFrame {
         environment: Attribute<EnvironmentValues>
     ) {
         let frameAttribute: Attribute<ViewFrame>
+        let samples = AnimationSamplesBox<ViewFrame.AnimatableData>()
         if inputs.supportsVFD {
             let attribute = AnimatableFrameAttributeVFD(
                 position: inputs.position,
@@ -173,7 +185,8 @@ extension CachedEnvironment.AnimatedFrame {
                 phase: inputs.viewPhase,
                 time: inputs.time,
                 transaction: inputs.transaction,
-                animationsDisabled: inputs.base.animationsDisabled
+                animationsDisabled: inputs.base.animationsDisabled,
+                samples: samples
             )
             frameAttribute = Attribute(attribute)
         } else {
@@ -185,7 +198,8 @@ extension CachedEnvironment.AnimatedFrame {
                 phase: inputs.viewPhase,
                 time: inputs.time,
                 transaction: inputs.transaction,
-                animationsDisabled: inputs.base.animationsDisabled
+                animationsDisabled: inputs.base.animationsDisabled,
+                samples: samples
             )
             frameAttribute = Attribute(attribute)
         }
@@ -196,7 +210,8 @@ extension CachedEnvironment.AnimatedFrame {
             size: inputs.size,
             pixelLength: pixelLength,
             animatedFrame: frameAttribute,
-            environment: environment
+            environment: environment,
+            samples: samples
         )
     }
 }
@@ -210,6 +225,8 @@ extension CachedEnvironment {
         package let transaction: Attribute<Transaction>
         package let viewPhase: Attribute<_GraphInputs.Phase>
         package let animatedFrame: Attribute<ViewFrame>
+        /// Where the frame attribute describes the animation it is running.
+        package let samples: AnimationSamplesBox<ViewFrame.AnimatableData>
         private var _animatedPosition: Attribute<ViewOrigin>?
         private var _animatedSize: Attribute<ViewSize>?
         private var _animatedCGSize: Attribute<CGSize>?
@@ -220,7 +237,8 @@ extension CachedEnvironment {
             size: Attribute<ViewSize>,
             pixelLength: Attribute<CGFloat>,
             animatedFrame: Attribute<ViewFrame>,
-            environment: Attribute<EnvironmentValues>
+            environment: Attribute<EnvironmentValues>,
+            samples: AnimationSamplesBox<ViewFrame.AnimatableData>
         ) {
             self.position = position
             self.size = size
@@ -229,6 +247,7 @@ extension CachedEnvironment {
             self.transaction = inputs.transaction
             self.viewPhase = inputs.phase
             self.animatedFrame = animatedFrame
+            self.samples = samples
         }
 
         package mutating func animatedPosition() -> Attribute<ViewOrigin> {
