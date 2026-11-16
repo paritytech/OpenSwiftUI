@@ -9,7 +9,8 @@ let package = Package(
         .executable(name: "KitchenSink", targets: ["KitchenSink"]),
     ],
     dependencies: [
-        .package(path: "../.."),
+        // Named here, or the package would be called after whatever folder the checkout is in.
+        .package(name: "OpenSwiftUI", path: "../.."),
     ],
     targets: [
         .executableTarget(
