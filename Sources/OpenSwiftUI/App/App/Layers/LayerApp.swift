@@ -38,7 +38,7 @@ func runLayerApp(_ item: SceneList.Item) -> Never {
     let screen = layerHost.size
     var environment = item.environment
     environment.compositorScrolls = true
-    environment.animationsAreDescribed = ProcessInfo.processInfo.environment["OPENSWIFTUI_LAYER_ANIMATIONS"] != "app"
+    AnimationDescriptions.areWanted = ProcessInfo.processInfo.environment["OPENSWIFTUI_LAYER_ANIMATIONS"] != "app"
     let host = GTKHostingView(rootView: item.value.view, environment: environment)
     host.resize(width: Int(screen.width), height: Int(screen.height), scale: Double(layerHost.scale))
 
@@ -99,9 +99,9 @@ private final class LayerSession {
         }
         link.add(to: .main, forMode: .common)
         self.link = link
-        host.updateRequested = { [weak link] in
-            // The graph may ask from any thread.
-            DispatchQueue.main.async { link?.isPaused = false }
+        host.updateRequested = { [weak self] in
+            // The graph may ask from any thread, and for a time that is still far off.
+            DispatchQueue.main.async { self?.sleepUntilNextUpdate() }
         }
         LayerHost.shared.onTouch = { [unowned self] touch in
             self.touch(touch)
@@ -131,7 +131,8 @@ private final class LayerSession {
             return
         }
         let frame = link.duration > 0 ? link.duration : 1.0 / 60.0
-        let wait = deadline - clock
+        // From now, not from the last frame: the timer below counts from now.
+        let wait = deadline - CACurrentMediaTime()
         guard wait > 2 * frame else {
             link.isPaused = false
             return

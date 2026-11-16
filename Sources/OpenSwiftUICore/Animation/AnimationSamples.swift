@@ -5,19 +5,26 @@
 //  Describing an animation ahead of time, for a host that can run animations by itself.
 //
 //  The engine samples every animation in the app, frame by frame, and that does not change.
-//  A host that asks for it (`EnvironmentValues.animationsAreDescribed`) is also told, when an
-//  animation starts or changes course, every value the animation will take from then on. The
-//  values travel in the display list, on the item they move or fade (`DisplayList.Ahead`). The
-//  host hands them to its compositor and from then on ignores what the engine samples for that
+//  For a host that asks (`AnimationDescriptions.areWanted`), an animation that starts or
+//  changes course also has every value it will take from then on worked out. The values
+//  travel in the display list, on the item they move or fade (`DisplayList.Ahead`). The host
+//  hands them to its compositor and from then on ignores what the engine samples for that
 //  item, so the picture keeps moving however busy the app is.
 //
 //  Described: where an item is, and the value of a renderer effect such as opacity. An item's
 //  place is described when it is known what the item is placed from: an origin that does not
-//  move (the root, the inside of a geometry group or of a geometry effect), or the position of
-//  a renderer effect around it, which may be animated too.
+//  move (the root, the inside of a geometry group or of a geometry effect), or the animated
+//  position of a view around it, when whoever placed it from there said so
+//  (`_ViewInputs.setContainerPosition(animatedPositionOf:)`).
 //
 //  Not described: sizes, the contents of a leaf (a colour that changes), and animations that
 //  do not end, such as one that repeats for ever.
+//
+//  A description is not an attribute, and the value it describes need not change when the
+//  description is made: an animation holds its first value for a frame or two, or for as long
+//  as its delay. So that the display list still hears of it at once, the rules that attach
+//  descriptions depend on a seed that changes when what a value is heading for does
+//  (`PositionSamples.seed`).
 
 package import Foundation
 package import OpenAttributeGraphShims
@@ -68,33 +75,91 @@ package final class AnimationSamplesBox<Data> {
     /// the value is going somewhere nothing here can tell.
     package var isAnimating = false
     package var samples: AnimationSamples<Data>?
-    /// For a position: whether the view moves within its container, for the pair of
-    /// descriptions with these seeds. Kept because it takes every value to find out.
-    package var movesInContainer: (own: UInt32, container: UInt32, moves: Bool)?
 
     package init() {}
+
+    /// Changes with the description, and with whether there is anything to describe.
+    fileprivate var word: UInt32 {
+        samples?.seed ?? (isAnimating ? .max : 0)
+    }
 }
 
 /// The descriptions that say where a view will be drawn: of its own position, and of the
 /// position of what it is placed from.
-package struct PositionSamples {
-    package var own: AnimationSamplesBox<ViewFrame.AnimatableData>
-    /// Nil when the view is placed from an origin that does not move.
-    package var container: AnimationSamplesBox<ViewFrame.AnimatableData>?
-}
-
-// MARK: - EnvironmentValues
-
-private struct AnimationsAreDescribedKey: EnvironmentKey {
-    static var defaultValue: Bool { false }
-}
-
-extension EnvironmentValues {
-    /// The host runs animations by itself and wants them described; see `AnimationSamples`.
-    package var animationsAreDescribed: Bool {
-        get { self[AnimationsAreDescribedKey.self] }
-        set { self[AnimationsAreDescribedKey.self] = newValue }
+package final class PositionSamples {
+    package enum Container {
+        /// An origin that does not move.
+        case fixed
+        /// The animated position of a view around this one.
+        case animated(AnimationSamplesBox<ViewFrame.AnimatableData>)
+        /// Something nothing here can tell about.
+        case unknown
     }
+
+    package let own: AnimationSamplesBox<ViewFrame.AnimatableData>
+    package let container: Container
+    /// Changes when either description may have. Reading it makes the reader depend on what
+    /// the positions are heading for, and brings both descriptions up to date.
+    package let seed: Attribute<UInt32>
+    /// Whether the view moves within its container, for the pair of descriptions with these
+    /// seeds. Kept because it takes every value to find out.
+    fileprivate var movesInContainer: (own: UInt32, container: UInt32, moves: Bool)?
+
+    fileprivate init(
+        own: AnimationSamplesBox<ViewFrame.AnimatableData>,
+        container: Container,
+        seed: Attribute<UInt32>
+    ) {
+        self.own = own
+        self.container = container
+        self.seed = seed
+    }
+}
+
+/// The seed of the descriptions a position is drawn from; see `PositionSamples.seed`.
+private struct PositionSamplesSeed: Rule, AsyncAttribute {
+    /// What the position is heading for. A description is made when this changes.
+    @Attribute var model: ViewOrigin
+    /// Where the position is. Reading it brings its description up to date.
+    @Attribute var animated: ViewOrigin
+    @OptionalAttribute var containerModel: ViewOrigin?
+    @OptionalAttribute var container: ViewOrigin?
+    let own: AnimationSamplesBox<ViewFrame.AnimatableData>
+    let containerBox: AnimationSamplesBox<ViewFrame.AnimatableData>?
+
+    var value: UInt32 {
+        _ = (model, containerModel)
+        _ = (animated, container)
+        return own.word &* 0x9E37_79B1 &+ (containerBox?.word ?? 0)
+    }
+}
+
+/// The seed of the description of an animated value, for a rule to depend on; see
+/// `PositionSamples.seed`.
+package struct AnimationSamplesSeedRule<Value>: Rule, AsyncAttribute where Value: Animatable {
+    @Attribute var model: Value
+    @Attribute var animated: Value
+    let box: AnimationSamplesBox<Value.AnimatableData>
+
+    package init(model: Attribute<Value>, animated: Attribute<Value>, box: AnimationSamplesBox<Value.AnimatableData>) {
+        _model = model
+        _animated = animated
+        self.box = box
+    }
+
+    package var value: UInt32 {
+        _ = (model, animated)
+        return box.word
+    }
+}
+
+// MARK: - AnimationDescriptions
+
+package enum AnimationDescriptions {
+    /// The host runs animations by itself and wants them described; see `AnimationSamples`.
+    /// It is set before the first view graph is made and not changed after: views are built
+    /// differently for it.
+    nonisolated(unsafe) package static var areWanted = false
 }
 
 // MARK: - DisplayList.Ahead
@@ -156,17 +221,24 @@ extension DisplayList {
         }
 
         /// Where an item is going whose origin is now `offset` away from the animated
-        /// position `samples` are for, itself placed from `containerPosition`.
+        /// position `samples` are for, itself placed from `containerPosition`. To be called
+        /// while a rule is evaluated: the rule comes to depend on the descriptions.
         package static func motion(
             _ samples: PositionSamples?,
             offset: CGSize,
             containerPosition: CGPoint
         ) -> Motion {
             guard let samples else {
-                // What the item is placed from is not known.
-                return .sampled
+                // Descriptions are not wanted.
+                return .still
             }
-            let containerBox = samples.container
+            _ = samples.seed.value
+            let containerBox: AnimationSamplesBox<ViewFrame.AnimatableData>?
+            switch samples.container {
+            case .fixed: containerBox = nil
+            case let .animated(box): containerBox = box
+            case .unknown: return .sampled
+            }
             guard let own = samples.own.samples else {
                 return samples.own.isAnimating || containerBox?.isAnimating == true ? .sampled : .still
             }
@@ -201,7 +273,7 @@ extension DisplayList {
             }
             // A view carried along by its container does not move within it.
             let moves: Bool
-            if let known = samples.own.movesInContainer, known.own == own.seed, known.container == container.seed {
+            if let known = samples.movesInContainer, known.own == own.seed, known.container == container.seed {
                 moves = known.moves
             } else {
                 let last = value(at: count - 1)
@@ -209,7 +281,7 @@ extension DisplayList {
                     let point = value(at: index)
                     return abs(point.x - last.x) > 0.01 || abs(point.y - last.y) > 0.01
                 }
-                samples.own.movesInContainer = (own.seed, container.seed, moves)
+                samples.movesInContainer = (own.seed, container.seed, moves)
             }
             guard moves else {
                 return .still
@@ -259,29 +331,53 @@ extension DisplayList {
 // MARK: - _ViewInputs
 
 extension _ViewInputs {
-    /// The animated position, and the descriptions that say where the view will be drawn.
-    /// There are none when it is not known what the view is placed from: where it is drawn
-    /// then depends on something that may be moving in a way nothing here can tell.
+    /// The animated position and, when descriptions are wanted, the ones that say where the
+    /// view will be drawn.
     package func describedAnimatedPosition() -> (position: Attribute<ViewOrigin>, samples: PositionSamples?) {
         let (position, own) = animatedPositionAndSamples()
         guard let own else {
             return (position, nil)
         }
+        let container: PositionSamples.Container
+        var containerModel = OptionalAttribute<ViewOrigin>()
+        var containerAnimated = OptionalAttribute<ViewOrigin>()
+        var containerBox: AnimationSamplesBox<ViewFrame.AnimatableData>?
         if containerPosition.identifier == ViewGraph.current.$zeroPoint.identifier {
-            return (position, PositionSamples(own: own, container: nil))
+            container = .fixed
+        } else if let known = containerPositionSamples, known.position == containerPosition.identifier {
+            container = .animated(known.samples)
+            containerModel = OptionalAttribute(known.model)
+            containerAnimated = OptionalAttribute(containerPosition)
+            containerBox = known.samples
+        } else {
+            container = .unknown
         }
-        if let container = containerPositionSamples, container.position == containerPosition.identifier {
-            return (position, PositionSamples(own: own, container: container.samples))
-        }
-        return (position, nil)
+        let seed = Attribute(PositionSamplesSeed(
+            model: self.position,
+            animated: position,
+            containerModel: containerModel,
+            container: containerAnimated,
+            own: own,
+            containerBox: containerBox
+        ))
+        return (position, PositionSamples(own: own, container: container, seed: seed))
     }
 
-    /// The animated position, and where the animation it is running is described. The two
-    /// come from one call because a later call may be answered by a different attribute.
+    /// The animated position and, when descriptions are wanted, where the animation it is
+    /// running is described. The two come from one call because a later call may be
+    /// answered by a different attribute.
     package func animatedPositionAndSamples() -> (
         position: Attribute<ViewOrigin>,
         samples: AnimationSamplesBox<ViewFrame.AnimatableData>?
     ) {
         base.cachedEnvironment.wrappedValue.animatedPositionAndSamples(for: self)
+    }
+
+    /// Places the views inside from this view's animated position, and says so, so that
+    /// where they are drawn can be described; see `AnimationSamples`.
+    package mutating func setContainerPosition(animatedPositionOf inputs: _ViewInputs) {
+        let (position, samples) = inputs.animatedPositionAndSamples()
+        containerPosition = position
+        containerPositionSamples = samples.map { (position.identifier, $0, inputs.position) }
     }
 }

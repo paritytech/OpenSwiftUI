@@ -217,7 +217,7 @@ public struct _MatchedGeometryEffect<ID>: MultiViewModifier, PrimitiveViewModifi
                 )
             )
             newInputs.position = frame.origin
-            newInputs.containerPosition = inputs.animatedPosition()
+            newInputs.setContainerPosition(animatedPositionOf: inputs)
             newInputs.size = frame.size
             newInputs.requestsLayoutComputer = true
             viewFrame = frame

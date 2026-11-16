@@ -369,13 +369,12 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
            !described.isDescribed || described.target == target {
             return
         }
-        let isWanted = Graph.withoutUpdate { environment.value.animationsAreDescribed }
-        let values = isWanted ? animatorState.valuesAhead(
+        let values = animatorState.valuesAhead(
             target: target,
             step: AnimationSamples<Value.AnimatableData>.step,
             limit: AnimationSamples<Value.AnimatableData>.limit,
             environment: environment
-        ) : nil
+        )
         described = (animatorState.generation, target, values != nil)
         samplesBox.samples = values.map { values in
             AnimationSamples(

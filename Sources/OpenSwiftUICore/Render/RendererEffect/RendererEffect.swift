@@ -75,9 +75,7 @@ extension _RendererEffect {
                 newInputs.containerPosition = origin
                 newInputs.size = roundedSize
             } else {
-                let (position, samples) = inputs.animatedPositionAndSamples()
-                newInputs.containerPosition = position
-                newInputs.containerPositionSamples = (position.identifier, samples)
+                newInputs.setContainerPosition(animatedPositionOf: inputs)
             }
         }
         var outputs = body(_Graph(), newInputs)
@@ -127,12 +125,20 @@ extension RendererEffect {
             return body(_Graph(), inputs)
         }
         var effect = effect
-        let samples = AnimationSamplesBox<AnimatableData>()
+        let model = effect.value
+        let samples = AnimationDescriptions.areWanted ? AnimationSamplesBox<AnimatableData>() : nil
         makeAnimatable(value: &effect, inputs: inputs.base, samples: samples)
+        guard let samples, effect.value.identifier != model.identifier else {
+            return _makeRendererEffect(effect: effect, inputs: inputs, body: body)
+        }
+        // The display list rule depends on this, so that it hears of a description when
+        // it is made and not only once the effect's value first changes.
+        let seed = Attribute(AnimationSamplesSeedRule(model: model, animated: effect.value, box: samples))
         return _makeRendererEffect(
             effect: effect,
             inputs: inputs,
             effectAhead: { effect, size in
+                _ = seed.value
                 guard let samples = samples.samples else {
                     return nil
                 }

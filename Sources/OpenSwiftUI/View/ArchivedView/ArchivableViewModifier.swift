@@ -62,7 +62,7 @@ extension _ArchivableViewModifier {
         }
 
         var childInputs = inputs
-        childInputs.containerPosition = inputs.animatedPosition()
+        childInputs.setContainerPosition(animatedPositionOf: inputs)
         var outputs = body(_Graph(), childInputs)
         if inputs.preferences.requiresDisplayList {
             let identity = DisplayList.Identity()

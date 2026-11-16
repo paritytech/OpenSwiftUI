@@ -202,9 +202,11 @@ final class LayerTreeBuilder {
             return
         }
         // The layer is a fixed distance from the item's origin; should that distance
-        // change, the animation is made again for the new one.
+        // change, the animation is made again for the new one. It is worked back from two
+        // sums, so it is the same only to within rounding.
         let gap = CGSize(width: position.x - origin.x, height: position.y - origin.y)
-        if let current = entry.position, current.seed == track.seed, current.gap == gap {
+        if let current = entry.position, current.seed == track.seed,
+           abs(current.gap.width - gap.width) < 0.001, abs(current.gap.height - gap.height) < 0.001 {
             return
         }
         entry.position = (track.seed, gap)

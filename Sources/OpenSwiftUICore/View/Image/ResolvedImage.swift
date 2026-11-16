@@ -301,7 +301,7 @@ extension Image.Resolved: UnaryView, PrimitiveView, ShapeStyledLeafView, LeafVie
                 _openSwiftUIUnimplementedFailure()
             } else {
                 let group = _ShapeStyle_InterpolatorGroup()
-                newInputs.containerPosition = inputs.animatedPosition()
+                newInputs.setContainerPosition(animatedPositionOf: inputs)
                 let shapeStyles = inputs.resolvedShapeStyles(
                     role: .stroke,
                     mode: view.value.styleResolverMode

@@ -96,7 +96,13 @@ extension ShapeStyledLeafView {
         if inputs.preferences.requiresDisplayList {
             let identity = DisplayList.Identity()
             inputs.pushIdentity(identity)
-            let (position, ownPositionSamples) = inputs.describedAnimatedPosition()
+            let position: Attribute<ViewOrigin>
+            let samples: PositionSamples?
+            if let positionSamples {
+                (position, samples) = (inputs.animatedPosition(), positionSamples)
+            } else {
+                (position, samples) = inputs.describedAnimatedPosition()
+            }
             let displayList = ShapeStyledDisplayList(
                 group: interpolatorGroup,
                 identity: identity,
@@ -112,7 +118,7 @@ extension ShapeStyledLeafView {
                 options: inputs.displayListOptions,
                 data: data,
                 contentSeed: .init(),
-                positionSamples: positionSamples ?? ownPositionSamples
+                positionSamples: samples
             )
             outputs.displayList = Attribute(displayList)
         }
@@ -347,15 +353,17 @@ struct ShapeStyledDisplayList<V>: StatefulRule, AsyncAttribute where V: ShapeSty
             layers: &layers
         )
         var list = layers.commit(shape: &renderedShape, options: options)
-        list.describe { item in
-            DisplayList.Ahead.make(
-                origin: DisplayList.Ahead.motion(
-                    positionSamples,
-                    offset: item.frame.origin - position,
-                    containerPosition: containerPosition
-                ),
-                effect: nil
-            )
+        if let positionSamples {
+            list.describe { item in
+                DisplayList.Ahead.make(
+                    origin: DisplayList.Ahead.motion(
+                        positionSamples,
+                        offset: item.frame.origin - position,
+                        containerPosition: containerPosition
+                    ),
+                    effect: nil
+                )
+            }
         }
         value = list
     }

@@ -51,7 +51,7 @@ private struct TemporalStateViewModifier<State>: PrimitiveViewModifier, MultiVie
         body: @escaping (_Graph, _ViewInputs) -> _ViewOutputs
     ) -> _ViewOutputs {
         var childInputs = inputs
-        childInputs.containerPosition = inputs.animatedPosition()
+        childInputs.setContainerPosition(animatedPositionOf: inputs)
         var outputs = body(_Graph(), childInputs)
         if inputs.preferences.requiresDisplayList {
             let state = Attribute(MakeState(modifier: modifier.value, content: .init(outputs.displayList)))
@@ -153,7 +153,7 @@ struct TemporalStack<States, Content>: UnaryView, PrimitiveView where States: Co
         let requiresDisplayList = inputs.preferences.requiresDisplayList
         var childInputs = inputs
         if requiresDisplayList {
-            childInputs.containerPosition = inputs.animatedPosition()
+            childInputs.setContainerPosition(animatedPositionOf: inputs)
         }
         let children = Attribute(TemporalStackChildren(view: view.value, inputs: childInputs))
         var outputs = _ViewOutputs()

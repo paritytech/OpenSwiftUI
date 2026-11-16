@@ -113,8 +113,9 @@ extension CachedEnvironment {
         return withAnimatedFrame(for: inputs) { $0.animatedPosition() }
     }
 
-    /// The animated position, and where the animation it is running is described. The two
-    /// come from one call because a later call may be answered by a different attribute.
+    /// The animated position and, when descriptions are wanted, where the animation it is
+    /// running is described. The two come from one call because a later call may be
+    /// answered by a different attribute.
     package mutating func animatedPositionAndSamples(
         for inputs: _ViewInputs
     ) -> (position: Attribute<ViewOrigin>, samples: AnimationSamplesBox<ViewFrame.AnimatableData>?) {
@@ -175,7 +176,7 @@ extension CachedEnvironment.AnimatedFrame {
         environment: Attribute<EnvironmentValues>
     ) {
         let frameAttribute: Attribute<ViewFrame>
-        let samples = AnimationSamplesBox<ViewFrame.AnimatableData>()
+        let samples = AnimationDescriptions.areWanted ? AnimationSamplesBox<ViewFrame.AnimatableData>() : nil
         if inputs.supportsVFD {
             let attribute = AnimatableFrameAttributeVFD(
                 position: inputs.position,
@@ -225,8 +226,9 @@ extension CachedEnvironment {
         package let transaction: Attribute<Transaction>
         package let viewPhase: Attribute<_GraphInputs.Phase>
         package let animatedFrame: Attribute<ViewFrame>
-        /// Where the frame attribute describes the animation it is running.
-        package let samples: AnimationSamplesBox<ViewFrame.AnimatableData>
+        /// Where the frame attribute describes the animation it is running, when
+        /// descriptions are wanted.
+        package let samples: AnimationSamplesBox<ViewFrame.AnimatableData>?
         private var _animatedPosition: Attribute<ViewOrigin>?
         private var _animatedSize: Attribute<ViewSize>?
         private var _animatedCGSize: Attribute<CGSize>?
@@ -238,7 +240,7 @@ extension CachedEnvironment {
             pixelLength: Attribute<CGFloat>,
             animatedFrame: Attribute<ViewFrame>,
             environment: Attribute<EnvironmentValues>,
-            samples: AnimationSamplesBox<ViewFrame.AnimatableData>
+            samples: AnimationSamplesBox<ViewFrame.AnimatableData>?
         ) {
             self.position = position
             self.size = size

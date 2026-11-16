@@ -313,7 +313,7 @@ public struct _ArchivedView: UnaryView, PrimitiveView, Equatable {
         if requiresDisplayList {
             inputs.preferences.add(ArchivedViewStatesKey.self)
         }
-        inputs.containerPosition = inputs.animatedPosition()
+        inputs.setContainerPosition(animatedPositionOf: inputs)
         let identity = DisplayList.Identity()
         inputs.pushIdentity(identity)
         let displayList = Attribute(ArchivedDisplayList(

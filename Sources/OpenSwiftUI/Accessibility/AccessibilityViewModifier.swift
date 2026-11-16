@@ -72,7 +72,7 @@ extension AccessibilityViewModifier {
             var childInputs = inputs
             configureInputsForGeometry(&childInputs)
             if inputs.needsDisplayListAccessibility {
-                childInputs.containerPosition = inputs.animatedPosition()
+                childInputs.setContainerPosition(animatedPositionOf: inputs)
             }
             let scrapeableID: ScrapeableID
             if options.contains(.scrapeable), inputs.isScrapeable {
