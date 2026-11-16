@@ -9,11 +9,16 @@
 # ../alpine/build.sh, which this runs. The output directory is
 # ../.build-alpine/<arch>/polkadot-os unless given. In it:
 #
-#   swiftui-kitchen-sink/                the app directory: app.conf, icon.svg, kitchen-sink
+#   swiftui-kitchen-sink/                the app directory: app.conf, icon.png, kitchen-sink
 #   swiftui-kitchen-sink-<arch>.tar.gz   the same, to carry to a phone
 #
 # The program is built for Alpine 3.22 and musl, and links Swift's runtime into itself. Of the
 # phone it needs the packages gtk4.0 and libstdc++, and a font.
+#
+# With OPENSWIFTUI_LAYERKIT_PATH set (a checkout of the LayerKit package: ../../../Package.swift
+# says what it does) the program has the layer host too: started by a compositor that hands it
+# a layer connection, it opens no window and the compositor draws it; anywhere else it opens
+# its GTK window as before.
 #
 # On a phone, for one user. ~/.local/share/polkadot-os also holds the host service's account
 # store and has to stay mode 700 (polkadot-os's AGENTS.md): a plain mkdir -p makes it 755 when
@@ -49,7 +54,7 @@ built="$here/../$built"
 app="$output/$id"
 rm -rf "$app"
 mkdir -p "$app"
-install -m 644 "$here/app.conf" "$here/icon.svg" "$app/"
+install -m 644 "$here/app.conf" "$here/icon.png" "$app/"
 install -m 755 "$built" "$app/$program"
 
 # The same bytes whenever the same program is packed: no owner, no times, a fixed order.
