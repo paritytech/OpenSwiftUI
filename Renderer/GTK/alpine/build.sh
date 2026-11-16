@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Cross-builds the example for Alpine (musl) from a glibc machine.
+# Cross-builds one of this package's programs for Alpine (musl) from a glibc machine.
 #
-#   build.sh <x86_64|aarch64> <sysroot> [swift build arguments]
+#   build.sh <x86_64|aarch64> <sysroot> [--product NAME] [--release] [swift build arguments]
 #
 # <sysroot> comes from make-sysroot.sh. Needs the Swift SDK for Static Linux that matches the
 # installed toolchain (https://www.swift.org/install/linux), which supplies Swift's runtime and
@@ -10,13 +10,26 @@
 # The SDK only links fully static executables, and a static musl executable cannot dlopen, so
 # it could never load GTK or a GPU driver. This script therefore compiles with SwiftPM and links
 # by hand: Swift's runtime statically, musl, GTK4, Cairo and Pango dynamically from the sysroot.
-# The result is .build-alpine/<arch>/ExampleApp and needs only Alpine's gtk4.0 package.
+#
+# The program is ExampleApp unless --product names another. It is left, and its path printed,
+# at .build-alpine/<arch>/<product>, or with --release, which optimizes and strips it, at
+# .build-alpine/<arch>/release/<product>. It needs Alpine's gtk4.0 and libstdc++ packages.
 
 set -euo pipefail
 
-arch="${1:?usage: build.sh <x86_64|aarch64> <sysroot> [swift build arguments]}"
-sysroot="$(realpath "${2:?usage: build.sh <x86_64|aarch64> <sysroot> [swift build arguments]}")"
+usage="usage: build.sh <x86_64|aarch64> <sysroot> [--product NAME] [--release] [swift build arguments]"
+arch="${1:?$usage}"
+sysroot="$(realpath "${2:?$usage}")"
 shift 2
+product=ExampleApp
+configuration=debug
+while (($# > 0)); do
+    case "$1" in
+    --product) product="${2:?$usage}"; shift 2 ;;
+    --release) configuration=release; shift ;;
+    *) break ;;
+    esac
+done
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -32,7 +45,15 @@ runtime="$sdk/usr/lib/swift_static/linux-static"
 
 scratch=".build-alpine/$arch"
 support="$scratch/support"
-objects="$scratch/$arch-swift-linux-musl/debug"
+objects="$scratch/$arch-swift-linux-musl/$configuration"
+if [[ "$configuration" == release ]]; then
+    output="$scratch/release/$product"
+    strip=(-Wl,--strip-all)
+else
+    output="$scratch/$product"
+    strip=()
+fi
+mkdir -p "$(dirname "$output")"
 
 export OPENSWIFTUI_OPENATTRIBUTESHIMS_ATTRIBUTEGRAPH=0
 export OPENSWIFTUI_OPENATTRIBUTESHIMS_COMPUTE=1
@@ -52,11 +73,11 @@ cp alpine/execinfo.h "$support/include/execinfo.h"
 # SwiftPM compiles everything and then fails its own link step, which insists on a static
 # executable. Its object list for that step is what gets linked below; an object missing from
 # disk means the failure was a compile error instead.
-object_list="$objects/ExampleApp.product/Objects.LinkFileList"
+object_list="$objects/$product.product/Objects.LinkFileList"
 # The plan is made afresh each time: in the cross builds SwiftPM's cached plan did not pick up
 # a source file added to the package the example depends on.
-swift build --swift-sdk "$arch-swift-linux-musl" --scratch-path "$scratch" --product ExampleApp \
-    --disable-build-manifest-caching \
+swift build --swift-sdk "$arch-swift-linux-musl" --scratch-path "$scratch" --product "$product" \
+    -c "$configuration" --disable-build-manifest-caching \
     -Xcxx -include -Xcxx cstdint -Xcc -I"$PWD/$support/include" "$@" || true
 [[ -f "$object_list" ]] || { echo "swift build produced no object list" >&2; exit 1; }
 while read -r object; do
@@ -81,14 +102,14 @@ gtk_libs="$(PKG_CONFIG_SYSROOT_DIR="$sysroot" pkg-config --libs-only-l gtk4)"
 # FoundationNetworking (AsyncImage) and libcrypto (Compute's hashing) are not autolinked.
 # shellcheck disable=SC2086
 "$toolchain/clang" --target="$arch-alpine-linux-musl" --sysroot="$sysroot" -fuse-ld=lld -pie \
-    -o "$scratch/ExampleApp" \
+    -o "$output" \
     "$runtime/$arch/swiftrt.o" "@$object_list" "$support/lib/Demangle.o" \
-    -Wl,--defsym,main=ExampleApp_main \
+    -Wl,--defsym,main="${product}_main" \
     -L"$runtime" -L"$sysroot/usr/lib" -L"$sdk/usr/lib" \
     -Wl,--start-group "@$autolink" -lswiftCore -lswift_RegexParser -ldispatch -lBlocksRuntime \
     -lFoundationNetworking -l_CFURLSessionInterface -Wl,--end-group \
     "$sysroot/usr/lib/libuuid.a" \
     "$sdk/usr/lib/libcurl.a" "$sdk/usr/lib/libssl.a" "$sdk/usr/lib/libcrypto.a" "$sdk/usr/lib/libz.a" \
     "$sdk/usr/lib/libc++.a" "$sdk/usr/lib/libc++abi.a" \
-    $gtk_libs -lstdc++ -lm -lpthread -ldl -Wl,--export-dynamic
-echo "$scratch/ExampleApp"
+    $gtk_libs -lstdc++ -lm -lpthread -ldl -Wl,--export-dynamic "${strip[@]}"
+echo "$output"
