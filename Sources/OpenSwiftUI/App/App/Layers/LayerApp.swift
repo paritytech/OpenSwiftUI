@@ -7,8 +7,9 @@
 //  process draws. The compositor also supplies the screen's size, the frame pacing and the
 //  touches.
 //
-//  Animations are still evaluated here, frame by frame, so a busy app still stutters. What
-//  the compositor could run on its own (springs, scrolling) is not handed over yet.
+//  Scrolling is the compositor's: a scroll view's viewport becomes a scroll layer that the
+//  compositor moves under a touch by itself (CompositorScrolling.swift). Other animations
+//  are still evaluated here, frame by frame, so a busy app still stutters in those.
 
 #if OPENSWIFTUI_LAYERS
 import COpenSwiftUIGTKHost
@@ -30,7 +31,9 @@ func connectToLayerCompositor() -> Bool {
 func runLayerApp(_ item: SceneList.Item) -> Never {
     let layerHost = LayerHost.shared
     let screen = layerHost.size
-    let host = GTKHostingView(rootView: item.value.view, environment: item.environment)
+    var environment = item.environment
+    environment.compositorScrolls = true
+    let host = GTKHostingView(rootView: item.value.view, environment: environment)
     host.resize(width: Int(screen.width), height: Int(screen.height), scale: Double(layerHost.scale))
 
     CATransaction.begin()
@@ -55,6 +58,8 @@ private final class LayerSession {
     /// The graph's clock never runs backwards, though a touch can be handled a moment
     /// after the time of the frame that follows it.
     private var clock = 0.0
+    /// When a frame that arrived late was last made up for.
+    private var lastCatchUp = 0.0
 
     init(host: GTKHostingView, builder: LayerTreeBuilder) {
         self.host = host
@@ -65,7 +70,17 @@ private final class LayerSession {
         // The compositor says when each frame is drawn; the link sleeps while nothing here
         // needs another frame.
         let link = CADisplayLink { [unowned self] link in
-            self.tick(time: link.timestamp)
+            let now = CACurrentMediaTime()
+            guard now - link.timestamp > 2 * link.duration else {
+                self.tick(time: link.timestamp)
+                return
+            }
+            // The main thread was busy, and the frames it missed now arrive all at once.
+            // They are one late frame, not many, and it is drawn for now.
+            if now - self.lastCatchUp > link.duration {
+                self.lastCatchUp = now
+                self.tick(time: now)
+            }
         }
         link.add(to: .main, forMode: .common)
         self.link = link

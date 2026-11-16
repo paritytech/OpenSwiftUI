@@ -28,12 +28,17 @@ final class LayerTreeBuilder {
     }
 
     private final class Entry {
-        let layer = CALayer()
+        let layer: CALayer
         /// What the layer's contents were drawn from, so they are drawn again only on change.
         var text: (version: DisplayList.Version, size: CGSize)?
         var gradient: GradientKey?
+        /// For a scroll layer: what the compositor was last told, and who hears where it
+        /// has scrolled to.
+        var scrolling: (contentSize: CGSize, axes: Axis.Set)?
+        var scrollHandle: CompositorScrollHandle?
 
-        init() {
+        init(layer: CALayer) {
+            self.layer = layer
             // Display list positions are top-left corners.
             layer.anchorPoint = .zero
         }
@@ -73,16 +78,17 @@ final class LayerTreeBuilder {
 
     // MARK: Tree
 
-    private func entry(for item: DisplayList.Item) -> Entry {
+    /// The layer kept for `item`: a scroll layer when `scrolls`, a plain one otherwise.
+    private func entry(for item: DisplayList.Item, scrolls: Bool = false) -> Entry {
         let identity = item.identity.value
         let occurrence = occurrences[identity, default: 0]
         occurrences[identity] = occurrence + 1
         let key = Key(identity: identity, occurrence: occurrence)
         used.insert(key)
-        if let entry = entries[key] {
+        if let entry = entries[key], (entry.layer is CAScrollLayer) == scrolls {
             return entry
         }
-        let entry = Entry()
+        let entry = Entry(layer: scrolls ? CAScrollLayer() : CALayer())
         entries[key] = entry
         return entry
     }
@@ -358,6 +364,15 @@ final class LayerTreeBuilder {
             CairoDisplayListRenderer.unsupported("blend mode in layers")
         case .filter:
             CairoDisplayListRenderer.unsupported("filter in layers")
+        case let .platformGroup(factory) where factory is CompositorScrollGroup:
+            if let group = factory as? CompositorScrollGroup {
+                return [scrollLayer(group, list, item: item)]
+            }
+        case let .platformGroup(factory) where factory is CompositorScrollContent:
+            // Laid out already scrolled, for layout and hit testing. On screen the scroll
+            // layer around it does the scrolling, so the content itself stays put: it is
+            // where the compositor has it, whatever the app last knew.
+            origin = .zero
         default:
             // Groups and bookkeeping effects change nothing that is drawn. One that also
             // moves nothing needs no layer of its own.
@@ -372,6 +387,29 @@ final class LayerTreeBuilder {
         )
         setSublayers(of: entry.layer, to: layers(for: list))
         return [entry.layer]
+    }
+
+    /// A scroll view's viewport: a layer whose content the compositor scrolls under a touch
+    /// by itself, telling the scroll view where it has got to.
+    private func scrollLayer(_ group: CompositorScrollGroup, _ list: DisplayList, item: DisplayList.Item) -> CALayer {
+        let entry = entry(for: item, scrolls: true)
+        guard let scroll = entry.layer as? CAScrollLayer else { return entry.layer }
+        // A scroll layer keeps its bounds origin, which is the compositor's, whatever is set.
+        configure(entry, bounds: CGRect(origin: .zero, size: item.size), position: item.position, clips: true)
+        if entry.scrolling?.contentSize != group.contentSize || entry.scrolling?.axes != group.axes {
+            scroll.scrollMode = group.axes == .horizontal ? .horizontally
+                : group.axes == .vertical ? .vertically : .both
+            scroll.touchScrolling = CAScrollLayer.TouchScrolling(contentSize: group.contentSize)
+            entry.scrolling = (group.contentSize, group.axes)
+        }
+        if entry.scrollHandle !== group.handle {
+            entry.scrollHandle = group.handle
+            scroll.onScroll = { [weak handle = group.handle] offset, phase in
+                handle?.moved?(CGSize(width: offset.x, height: offset.y), phase == .idle)
+            }
+        }
+        setSublayers(of: scroll, to: layers(for: list))
+        return scroll
     }
 }
 #endif

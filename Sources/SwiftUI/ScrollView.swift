@@ -6,8 +6,13 @@
 //  backed by UIScrollView; there is no such platform view on Linux, so dragging, deceleration and
 //  the bounce at the ends are implemented here with gestures, layout and animations.
 //
+//  Under a host whose compositor scrolls by itself (`compositorScrolls`), none of that runs:
+//  the compositor follows the finger, coasts and bounces, and this view only keeps its offset
+//  in step with what the compositor reports, so that layout and hit testing stay right.
+//
 //  Not implemented: scroll indicators, wheel and trackpad scrolling, ScrollViewReader, paging.
-//  A touch that stops moving content also reaches the content under it.
+//  When this view scrolls by itself, a touch that stops moving content also reaches the
+//  content under it.
 
 import Foundation
 public import OpenSwiftUI
@@ -25,6 +30,8 @@ public struct ScrollView<Content>: View where Content: View {
     @State private var contentSize: CGSize = .zero
     @State private var viewportSize: CGSize = .zero
     @State private var presentation = ScrollPresentation()
+    @Environment(\.compositorScrolls) private var compositorScrolls
+    @State private var compositorHandle = CompositorScrollHandle()
     /// Set by a NavigationStack for a screen with a large title.
     @Environment(\.navigationLargeTitle) private var largeTitle
     /// This scroll view begins right under the space left for the large title, so it takes
@@ -44,6 +51,9 @@ public struct ScrollView<Content>: View where Content: View {
     public var body: some View {
         let title = axes.contains(.vertical) && isUnderLargeTitle ? largeTitle : nil
         let titleHeight = title?.height ?? 0
+        // The compositor reports where it has moved the content; a newer body's closure
+        // replaces this one.
+        let _ = compositorHandle.moved = { offset, _ in jump(to: offset) }
         content
             .environment(\.navigationLargeTitle, nil)
             .padding(.top, titleHeight)
@@ -51,9 +61,7 @@ public struct ScrollView<Content>: View where Content: View {
             // The scroll axes get no size limit; the other axis keeps the viewport's.
             .fixedSize(horizontal: axes.contains(.horizontal), vertical: axes.contains(.vertical))
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { contentSize = $0 }
-            // One group for the content: scrolling then moves a single item of the display
-            // list instead of changing the position of everything in it.
-            .geometryGroup()
+            .modifier(ScrollContentGroup(hostScrolls: compositorScrolls))
             .modifier(ScrollOffsetModifier(
                 offset: offset,
                 presentation: presentation,
@@ -64,13 +72,16 @@ public struct ScrollView<Content>: View where Content: View {
             // with it, the viewport is exactly what the parent proposes.
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { viewportSize = $0 }
-            .clipped()
+            .modifier(ScrollViewportMark(effect: compositorScrolls ? CompositorScrollEffect(
+                handle: compositorHandle, contentSize: contentSize, axes: axes
+            ) : nil))
             .contentShape(Rectangle())
-            .gesture(drag)
-            .simultaneousGesture(touch)
+            .gesture(drag, including: compositorScrolls ? .subviews : .all)
+            .simultaneousGesture(touch, including: compositorScrolls ? .subviews : .all)
             .onChange(of: limit) { _, limit in
-                // Content or viewport changed size: stay within what can now be shown.
-                if dragOrigin == nil, offset != offset.clamped(to: limit) {
+                // Content or viewport changed size: stay within what can now be shown. A
+                // compositor that scrolls does this itself and reports it.
+                if !compositorScrolls, dragOrigin == nil, offset != offset.clamped(to: limit) {
                     jump(to: offset.clamped(to: limit))
                 }
             }
@@ -185,6 +196,35 @@ private final class ScrollPresentation {
     var offset: CGSize = .zero
     /// When the current drag last moved the content.
     var lastMove: Date?
+}
+
+/// One group for the content: scrolling then moves a single item of the display list
+/// instead of changing the position of everything in it. Under a host that scrolls, the
+/// group is also the mark for what the host moves.
+private struct ScrollContentGroup: ViewModifier {
+    var hostScrolls: Bool
+
+    func body(content: Content) -> some View {
+        if hostScrolls {
+            content.modifier(CompositorScrollContentEffect())
+        } else {
+            content.geometryGroup()
+        }
+    }
+}
+
+/// The viewport's edge: a clip when this view scrolls by itself, and the mark that hands
+/// scrolling to the host otherwise, which clips as well.
+private struct ScrollViewportMark: ViewModifier {
+    var effect: CompositorScrollEffect?
+
+    func body(content: Content) -> some View {
+        if let effect {
+            content.modifier(effect)
+        } else {
+            content.clipped()
+        }
+    }
 }
 
 private struct ScrollOffsetModifier: ViewModifier, Animatable {

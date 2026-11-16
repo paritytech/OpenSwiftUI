@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 @main
@@ -5,7 +6,25 @@ struct ExampleApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onAppear(perform: blockMainThreadIfAsked)
         }
+    }
+}
+
+/// For seeing what still moves when the app is busy: with EXAMPLE_STALL_AT and
+/// EXAMPLE_STALL_FOR set (milliseconds), the main thread is blocked for that long, that long
+/// after launch.
+private func blockMainThreadIfAsked() {
+    let environment = ProcessInfo.processInfo.environment
+    guard let at = environment["EXAMPLE_STALL_AT"].flatMap(Double.init),
+          let duration = environment["EXAMPLE_STALL_FOR"].flatMap(Double.init) else {
+        return
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + at / 1000) {
+        let monotonic = ProcessInfo.processInfo.systemUptime
+        FileHandle.standardError.write(Data("ExampleApp: main thread blocked at \(monotonic)\n".utf8))
+        Thread.sleep(forTimeInterval: duration / 1000)
+        FileHandle.standardError.write(Data("ExampleApp: main thread free again\n".utf8))
     }
 }
 
