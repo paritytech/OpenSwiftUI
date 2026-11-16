@@ -21,16 +21,20 @@ import LayerKit
 @_spi(ForOpenSwiftUIOnly) import OpenSwiftUICore
 
 final class LayerTreeBuilder {
-    /// A display list item's identity, and which of the items sharing it this is.
+    /// A display list item's identity, and which of the items sharing it this is. Items
+    /// without an identity are told apart by where they are: `scope` is the item around them
+    /// that has a layer, so that one more of them somewhere leaves the others their layers.
     private struct Key: Hashable {
         var identity: UInt32
         var occurrence: Int
+        var scope: Int
     }
 
     private final class Entry {
+        let key: Key
         let layer: CALayer
         /// What the layer's contents were drawn from, so they are drawn again only on change.
-        var text: (version: DisplayList.Version, size: CGSize)?
+        var text: (seed: DisplayList.Seed, size: CGSize)?
         var gradient: GradientKey?
         /// For a scroll layer: what the compositor was last told, and who hears where it
         /// has scrolled to.
@@ -38,11 +42,13 @@ final class LayerTreeBuilder {
         var scrollHandle: CompositorScrollHandle?
         /// The animations the compositor is running for this layer, by the seed of their
         /// description; see `AnimationSamples`. While one runs, the property is the
-        /// compositor's and what the app samples for it is ignored.
-        var positionSeed: UInt32?
+        /// compositor's and what the app samples for it is ignored. For the position, also
+        /// how far the layer was from the item's origin when the animation was made.
+        var position: (seed: UInt32, gap: CGSize)?
         var opacitySeed: UInt32?
 
-        init(layer: CALayer) {
+        init(key: Key, layer: CALayer) {
+            self.key = key
             self.layer = layer
             // Display list positions are top-left corners.
             layer.anchorPoint = .zero
@@ -61,7 +67,12 @@ final class LayerTreeBuilder {
     private let scale: CGFloat
     private var entries: [Key: Entry] = [:]
     private var used: Set<Key> = []
-    private var occurrences: [UInt32: Int] = [:]
+    /// How many items have had each key so far in this update, whatever their occurrence.
+    private var occurrences: [Key: Int] = [:]
+    /// The key of the item whose layer the items now being walked go into; 0 at the root.
+    private var scope = 0
+    /// The engine's time for the display list being shown.
+    private var now = Time.zero
     private var gradients: [GradientKey: CGImage] = [:]
 
     init(root: CALayer, scale: CGFloat) {
@@ -69,13 +80,15 @@ final class LayerTreeBuilder {
         self.scale = scale
     }
 
-    /// Makes the layer tree show `list`.
-    func update(_ list: DisplayList) {
+    /// Makes the layer tree show `list`, which is the engine's picture at `time`.
+    func update(_ list: DisplayList, time: Time) {
         CATransaction.begin()
-        // The app already animates: every frame's values are final.
+        // Nothing animates by being set: what the compositor is to animate is said in full.
         CATransaction.setDisableActions(true)
+        now = time
         used.removeAll(keepingCapacity: true)
         occurrences.removeAll(keepingCapacity: true)
+        scope = 0
         setSublayers(of: root, to: layers(for: list))
         entries = entries.filter { used.contains($0.key) }
         CATransaction.commit()
@@ -86,16 +99,25 @@ final class LayerTreeBuilder {
     /// The layer kept for `item`: a scroll layer when `scrolls`, a plain one otherwise.
     private func entry(for item: DisplayList.Item, scrolls: Bool = false) -> Entry {
         let identity = item.identity.value
-        let occurrence = occurrences[identity, default: 0]
-        occurrences[identity] = occurrence + 1
-        let key = Key(identity: identity, occurrence: occurrence)
+        var key = Key(identity: identity, occurrence: 0, scope: identity == 0 ? scope : 0)
+        let occurrence = occurrences[key, default: 0]
+        occurrences[key] = occurrence + 1
+        key.occurrence = occurrence
         used.insert(key)
         if let entry = entries[key], (entry.layer is CAScrollLayer) == scrolls {
             return entry
         }
-        let entry = Entry(layer: scrolls ? CAScrollLayer() : CALayer())
+        let entry = Entry(key: key, layer: scrolls ? CAScrollLayer() : CALayer())
         entries[key] = entry
         return entry
+    }
+
+    /// The layers for `list`, which is what is inside `entry`'s item.
+    private func layers(for list: DisplayList, in entry: Entry) -> [CALayer] {
+        let outer = scope
+        scope = entry.key.hashValue
+        defer { scope = outer }
+        return layers(for: list)
     }
 
     private func setSublayers(of layer: CALayer, to sublayers: [CALayer]) {
@@ -172,20 +194,22 @@ final class LayerTreeBuilder {
     private func place(_ entry: Entry, at position: CGPoint, origin: CGPoint, track: DisplayList.Ahead.Track<CGPoint>?) {
         let layer = entry.layer
         guard let track else {
-            if entry.positionSeed != nil {
-                entry.positionSeed = nil
+            if entry.position != nil {
+                entry.position = nil
                 layer.removeAnimation(forKey: Self.positionKey)
             }
             layer.position = position
             return
         }
-        guard entry.positionSeed != track.seed else {
+        // The layer is a fixed distance from the item's origin; should that distance
+        // change, the animation is made again for the new one.
+        let gap = CGSize(width: position.x - origin.x, height: position.y - origin.y)
+        if let current = entry.position, current.seed == track.seed, current.gap == gap {
             return
         }
-        entry.positionSeed = track.seed
-        // The layer is a fixed distance from the item's origin.
-        let points = track.values().map {
-            CGPoint(x: $0.x + position.x - origin.x, y: $0.y + position.y - origin.y)
+        entry.position = (track.seed, gap)
+        let points = remaining(track.values(), from: track.time, step: track.step).map {
+            CGPoint(x: $0.x + gap.width, y: $0.y + gap.height)
         }
         layer.position = points.last ?? position
         animate(layer, keyPath: "position", key: Self.positionKey, values: points, step: track.step)
@@ -205,11 +229,19 @@ final class LayerTreeBuilder {
             return
         }
         entry.opacitySeed = track.seed
-        let opacities = track.values().map { effect -> Float in
+        let opacities = remaining(track.values(), from: track.time, step: track.step).map { effect -> Float in
             if case let .opacity(value) = effect { value } else { opacity }
         }
         layer.opacity = opacities.last ?? opacity
         animate(layer, keyPath: "opacity", key: Self.opacityKey, values: opacities, step: track.step)
+    }
+
+    /// What is left of a description made at `time`: the values from now on. A description
+    /// reaches the builder when the value first changes, which can be well after it was
+    /// made, as with an animation that starts after a delay.
+    private func remaining<Value>(_ values: [Value], from time: Time, step: Double) -> [Value] {
+        let elapsed = Int(((now - time) / step).rounded())
+        return Array(values.dropFirst(min(max(elapsed, 0), max(values.count - 1, 0))))
     }
 
     /// Replaces the animation under `key` with one through `values`, `step` seconds apart.
@@ -241,14 +273,14 @@ final class LayerTreeBuilder {
         case let .shape(path, paint, _):
             return shapeLayer(path, paint, item: item)
         case let .text(view, size):
-            return textLayer(view, size: size, item: item)
+            return textLayer(view, size: size, seed: content.seed, item: item)
         case let .flattened(list, offset, _):
             let entry = entry(for: item)
             configure(
                 entry, bounds: .zero, position: CGPoint(x: frame.minX + offset.x, y: frame.minY + offset.y),
                 ahead: item.ahead, origin: frame.origin
             )
-            setSublayers(of: entry.layer, to: layers(for: list))
+            setSublayers(of: entry.layer, to: layers(for: list, in: entry))
             return entry.layer
         case .shadow:
             CairoDisplayListRenderer.unsupported("shadow content in layers")
@@ -369,7 +401,13 @@ final class LayerTreeBuilder {
     }
 
     /// Text is drawn here, with Pango, into a picture the compositor shows.
-    private func textLayer(_ view: StyledTextContentView, size: CGSize, item: DisplayList.Item) -> CALayer? {
+    /// `seed` changes when what the text shows does, and not when the text only moves.
+    private func textLayer(
+        _ view: StyledTextContentView,
+        size: CGSize,
+        seed: DisplayList.Seed,
+        item: DisplayList.Item
+    ) -> CALayer? {
         // Room for ink that leaves the text's own rectangle, such as an italic's overhang.
         let margin: CGFloat = 2
         let pixelWidth = Int(((size.width + 2 * margin) * scale).rounded(.up))
@@ -377,7 +415,7 @@ final class LayerTreeBuilder {
         guard pixelWidth > 0, pixelHeight > 0, size.width > 0, size.height > 0 else { return nil }
         let entry = entry(for: item)
         var image = entry.layer.contents as? CGImage
-        if image == nil || entry.text?.version != item.version || entry.text?.size != size {
+        if image == nil || entry.text?.seed != seed || entry.text?.size != size {
             guard let surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, Int32(pixelWidth), Int32(pixelHeight)),
                   cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS,
                   let cr = cairo_create(surface) else {
@@ -405,7 +443,7 @@ final class LayerTreeBuilder {
             ahead: item.ahead,
             origin: item.position
         )
-        entry.text = (item.version, size)
+        entry.text = (seed, size)
         entry.gradient = nil
         setSublayers(of: entry.layer, to: [])
         return entry.layer
@@ -478,7 +516,7 @@ final class LayerTreeBuilder {
             cornerRadius: cornerRadius, clips: clips, opacity: opacity, transform: transform,
             ahead: ahead, origin: position, fades: fades
         )
-        setSublayers(of: entry.layer, to: layers(for: list))
+        setSublayers(of: entry.layer, to: layers(for: list, in: entry))
         return [entry.layer]
     }
 
@@ -488,20 +526,30 @@ final class LayerTreeBuilder {
         let entry = entry(for: item, scrolls: true)
         guard let scroll = entry.layer as? CAScrollLayer else { return entry.layer }
         // A scroll layer keeps its bounds origin, which is the compositor's, whatever is set.
-        configure(entry, bounds: CGRect(origin: .zero, size: item.size), position: item.position, clips: true)
+        configure(
+            entry, bounds: CGRect(origin: .zero, size: item.size), position: item.position, clips: true,
+            ahead: item.ahead, origin: item.position
+        )
         if entry.scrolling?.contentSize != group.contentSize || entry.scrolling?.axes != group.axes {
-            scroll.scrollMode = group.axes == .horizontal ? .horizontally
-                : group.axes == .vertical ? .vertically : .both
+            let horizontal = group.axes.contains(.horizontal), vertical = group.axes.contains(.vertical)
+            scroll.scrollMode = horizontal && vertical ? .both
+                : horizontal ? .horizontally
+                : vertical ? .vertically : .none
             scroll.touchScrolling = CAScrollLayer.TouchScrolling(contentSize: group.contentSize)
             entry.scrolling = (group.contentSize, group.axes)
         }
         if entry.scrollHandle !== group.handle {
+            // A new layer starts unscrolled, which the scroll view has to hear: it may be
+            // one that has scrolled before, with another layer.
+            if entry.scrollHandle == nil {
+                group.handle.moved?(.zero, true)
+            }
             entry.scrollHandle = group.handle
             scroll.onScroll = { [weak handle = group.handle] offset, phase in
                 handle?.moved?(CGSize(width: offset.x, height: offset.y), phase == .idle)
             }
         }
-        setSublayers(of: scroll, to: layers(for: list))
+        setSublayers(of: scroll, to: layers(for: list, in: entry))
         return scroll
     }
 }

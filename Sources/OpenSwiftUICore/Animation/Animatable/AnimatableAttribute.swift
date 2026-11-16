@@ -224,10 +224,9 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
     package var samplesBox: AnimationSamplesBox<Value.AnimatableData>? = nil
 
     /// What the description in `samplesBox` was made from: it is made again when the
-    /// animation changes course or the value it is heading for changes.
-    private var described: (generation: UInt32, target: Value.AnimatableData)? = nil
-
-    private var samplesSeed: UInt32 = 0
+    /// animation changes course or the value it is heading for changes. An animation found
+    /// to have no description, such as one that never ends, has none wherever it is heading.
+    private var described: (generation: UInt32, target: Value.AnimatableData, isDescribed: Bool)? = nil
 
     package init(
         phase: Attribute<_GraphInputs.Phase>,
@@ -360,31 +359,32 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
             return
         }
         guard let animatorState, let target = previousModelData else {
+            samplesBox.isAnimating = false
             samplesBox.samples = nil
             described = nil
             return
         }
-        if let described, described.generation == animatorState.generation, described.target == target {
+        samplesBox.isAnimating = true
+        if let described, described.generation == animatorState.generation,
+           !described.isDescribed || described.target == target {
             return
         }
-        described = (animatorState.generation, target)
         let isWanted = Graph.withoutUpdate { environment.value.animationsAreDescribed }
-        guard isWanted, let values = animatorState.valuesAhead(
+        let values = isWanted ? animatorState.valuesAhead(
             target: target,
             step: AnimationSamples<Value.AnimatableData>.step,
             limit: AnimationSamples<Value.AnimatableData>.limit,
             environment: environment
-        ) else {
-            samplesBox.samples = nil
-            return
+        ) : nil
+        described = (animatorState.generation, target, values != nil)
+        samplesBox.samples = values.map { values in
+            AnimationSamples(
+                seed: AnimationSamples<Value.AnimatableData>.makeSeed(),
+                time: Graph.withoutUpdate { time },
+                step: AnimationSamples<Value.AnimatableData>.step,
+                values: values
+            )
         }
-        samplesSeed &+= 1
-        samplesBox.samples = AnimationSamples(
-            seed: samplesSeed,
-            time: Graph.withoutUpdate { time },
-            step: AnimationSamples<Value.AnimatableData>.step,
-            values: values
-        )
     }
 
     package mutating func update(
@@ -414,6 +414,7 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
         animatorState = nil
         previousModelData = nil
         resetSeed = phase.resetSeed
+        samplesBox?.isAnimating = false
         samplesBox?.samples = nil
         described = nil
     }
@@ -565,6 +566,9 @@ final package class AnimatorState<V> where V: VectorArithmetic {
             interval = newInterval
         } else {
             let elapsed = time - beginTime
+            // The animation is not evaluated again in this update, and a description made
+            // now has to start from now.
+            evaluatedElapsed = elapsed
             var context = AnimationContext(
                 state: state,
                 environment: environment,

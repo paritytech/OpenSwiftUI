@@ -35,6 +35,10 @@ package struct CompositorScrollEffect: RendererEffect {
 
     package static var isolatesChildPosition: Bool { true }
 
+    /// The viewport stays in the display list while there is nothing in it: its layer, and
+    /// with it where the compositor has scrolled to, is kept for when there is again.
+    package static var preservesEmptyContent: Bool { true }
+
     package func effectValue(size: CGSize) -> DisplayList.Effect {
         .platformGroup(CompositorScrollGroup(handle: handle, contentSize: contentSize, axes: axes))
     }

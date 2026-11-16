@@ -6,7 +6,7 @@
 #
 # The directory is a checkout of the package that provides LayerKit and its reference
 # compositor (layer-compositor). Needs Swift 6.3 and the gtk4, uuid and openssl development
-# files. Close the window to stop.
+# files. Close the window to stop; the script also ends when the app does.
 
 set -euo pipefail
 
@@ -39,4 +39,5 @@ done
 
 OPENSWIFTUI_HOST=layers .build/debug/ExampleApp &
 app=$!
-wait "$compositor"
+# Whichever ends first ends the other, through the trap.
+wait -n "$compositor" "$app"

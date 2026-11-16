@@ -51,9 +51,7 @@ public struct ScrollView<Content>: View where Content: View {
     public var body: some View {
         let title = axes.contains(.vertical) && isUnderLargeTitle ? largeTitle : nil
         let titleHeight = title?.height ?? 0
-        // The compositor reports where it has moved the content; a newer body's closure
-        // replaces this one.
-        let _ = compositorHandle.moved = { offset, _ in jump(to: offset) }
+        let _ = followCompositor()
         content
             .environment(\.navigationLargeTitle, nil)
             .padding(.top, titleHeight)
@@ -68,6 +66,7 @@ public struct ScrollView<Content>: View where Content: View {
                 // The title counts as gone a little before its last pixels are.
                 titleCollapse: title.map { $0.height - 12 }
             ))
+            .modifier(ScrollAlignmentGroup(hostScrolls: compositorScrolls))
             // A flexible frame is never smaller than its content unless the minimum says so;
             // with it, the viewport is exactly what the parent proposes.
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
@@ -179,6 +178,18 @@ public struct ScrollView<Content>: View where Content: View {
     private func jump(to newOffset: CGSize) {
         withAnimation(Animation(ScrollJump())) { offset = newOffset }
     }
+
+    /// Under a host that scrolls, has the offset follow where the compositor reports the
+    /// content to be. A newer body's closure replaces this one.
+    private func followCompositor() {
+        guard compositorScrolls else { return }
+        // Only the offset is captured. Capturing the view would keep it alive for ever: the
+        // view's state holds the handle, and the handle holds this closure.
+        let offset = _offset
+        compositorHandle.moved = { newOffset, _ in
+            withAnimation(Animation(ScrollJump())) { offset.wrappedValue = newOffset }
+        }
+    }
 }
 
 /// How long after the last movement a lift still counts as a flick, in seconds.
@@ -209,6 +220,21 @@ private struct ScrollContentGroup: ViewModifier {
             content.modifier(CompositorScrollContentEffect())
         } else {
             content.geometryGroup()
+        }
+    }
+}
+
+/// Under a host that scrolls, a group around the scrolled content, so that the content's
+/// place within it is the scroll offset and nothing else. The host ignores that place;
+/// whatever else puts the content where it is in the viewport stays with this group.
+private struct ScrollAlignmentGroup: ViewModifier {
+    var hostScrolls: Bool
+
+    func body(content: Content) -> some View {
+        if hostScrolls {
+            content.geometryGroup()
+        } else {
+            content
         }
     }
 }

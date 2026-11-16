@@ -38,7 +38,12 @@ func runGTKApp(_ app: some App) -> Never {
     let environment = processInfo.environment
     #if OPENSWIFTUI_LAYERS
     let wantedHost = environment["OPENSWIFTUI_HOST"]
-    if wantedHost != "gtk", environment["OPENSWIFTUI_GTK_CAPTURE_DIR"] == nil {
+    let capturesFrames = environment["OPENSWIFTUI_GTK_CAPTURE_DIR"] != nil
+    if wantedHost == "layers", capturesFrames {
+        print("OpenSwiftUI: OPENSWIFTUI_HOST=layers and OPENSWIFTUI_GTK_CAPTURE_DIR ask for different hosts")
+        exit(1)
+    }
+    if wantedHost != "gtk", !capturesFrames {
         if connectToLayerCompositor() {
             runLayerApp(item)
         } else if wantedHost == "layers" {

@@ -21,7 +21,8 @@ import Foundation
 import LayerKit
 @_spi(ForOpenSwiftUIOnly) import OpenSwiftUICore
 
-/// Connects to the layer compositor. False when none is listening.
+/// Connects to the layer compositor. False when none is listening, or when one accepts
+/// the connection and then says nothing.
 func connectToLayerCompositor() -> Bool {
     do {
         try LayerHost.shared.connect(name: ProcessInfo.processInfo.processName)
@@ -51,6 +52,12 @@ func runLayerApp(_ item: SceneList.Item) -> Never {
     layerHost.rootLayer = root
     CATransaction.commit()
 
+    // Without its compositor the app shows nothing and hears nothing; like an app whose
+    // window was closed, it is over.
+    layerHost.onDisconnect = {
+        FileHandle.standardError.write(Data("OpenSwiftUI: the layer compositor went away\n".utf8))
+        exit(0)
+    }
     let session = LayerSession(host: host, builder: LayerTreeBuilder(root: root, scale: layerHost.scale))
     session.start()
     layerHost.run()
@@ -65,6 +72,9 @@ private final class LayerSession {
     private var clock = 0.0
     /// When a frame that arrived late was last made up for.
     private var lastCatchUp = 0.0
+    /// Counts the times the link was put to sleep until an update is due, so that a
+    /// wake-up set for an earlier sleep does nothing.
+    private var sleeps = 0
 
     init(host: GTKHostingView, builder: LayerTreeBuilder) {
         self.host = host
@@ -106,9 +116,33 @@ private final class LayerSession {
         RunLoop.flushObservers()
         _ = host.tick(time: clock)
         if let displayList = host.takeDisplayList() {
-            builder.update(displayList)
+            builder.update(displayList, time: host.currentTimestamp)
         }
-        link?.isPaused = !host.hasPendingUpdate
+        sleepUntilNextUpdate()
+    }
+
+    /// Frames are asked for only while the next update is at most a frame or two away. For
+    /// one further off, such as an animation that starts after a delay, the link sleeps
+    /// and a timer wakes it in time.
+    private func sleepUntilNextUpdate() {
+        guard let link else { return }
+        guard let deadline = host.updateDeadline else {
+            link.isPaused = true
+            return
+        }
+        let frame = link.duration > 0 ? link.duration : 1.0 / 60.0
+        let wait = deadline - clock
+        guard wait > 2 * frame else {
+            link.isPaused = false
+            return
+        }
+        link.isPaused = true
+        sleeps += 1
+        let sleep = sleeps
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait - frame) { [weak self] in
+            guard let self, self.sleeps == sleep else { return }
+            self.link?.isPaused = false
+        }
     }
 
     private func touch(_ touch: LayerTouch) {

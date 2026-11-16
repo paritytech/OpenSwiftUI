@@ -156,8 +156,8 @@ private struct LeafDisplayList<V>: StatefulRule, CustomStringConvertible where V
             identity: identity,
             version: version
         )
-        item.ahead = DisplayList.Ahead(
-            origin: DisplayList.Ahead.origin(
+        item.ahead = DisplayList.Ahead.make(
+            origin: DisplayList.Ahead.motion(
                 positionSamples,
                 offset: origin - position,
                 containerPosition: containerPosition

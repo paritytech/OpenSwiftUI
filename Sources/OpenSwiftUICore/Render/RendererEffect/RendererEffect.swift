@@ -136,7 +136,7 @@ extension RendererEffect {
                 guard let samples = samples.samples else {
                     return nil
                 }
-                return DisplayList.Ahead.Track(seed: samples.seed, step: samples.step) {
+                return DisplayList.Ahead.Track(seed: samples.seed, time: samples.time, step: samples.step) {
                     samples.values.map { data in
                         var effect = effect
                         effect.animatableData = data
@@ -240,8 +240,8 @@ private struct RendererEffectDisplayList<Effect>: Rule, AsyncAttribute, Scrapeab
             identity: identity,
             version: version
         )
-        item.ahead = DisplayList.Ahead(
-            origin: DisplayList.Ahead.origin(
+        item.ahead = DisplayList.Ahead.make(
+            origin: DisplayList.Ahead.motion(
                 positionSamples,
                 offset: frame.origin - position,
                 containerPosition: containerPosition

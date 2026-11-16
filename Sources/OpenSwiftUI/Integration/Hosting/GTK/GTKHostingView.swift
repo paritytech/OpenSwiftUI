@@ -77,9 +77,10 @@ final class GTKHostingView: ViewRendererHost, ViewGraphRenderHost, EventGraphHos
         return displayList
     }
 
-    /// The graph has asked for an evaluation that is still to come.
-    var hasPendingUpdate: Bool {
-        deadlineLock.withLock { deadline < .infinity }
+    /// When the evaluation the graph has asked for is due, on the clock of `tick(time:)`.
+    /// Nil when it has asked for none.
+    var updateDeadline: Double? {
+        deadlineLock.withLock { deadline < .infinity ? deadline : nil }
     }
 
     func draw(_ cr: OpaquePointer) {

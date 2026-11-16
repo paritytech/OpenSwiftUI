@@ -279,8 +279,8 @@ private struct GeometryEffectDisplayList<Provider>: Rule, AsyncAttribute, Custom
             identity: identity,
             version: .init(forUpdate: ())
         )
-        item.ahead = DisplayList.Ahead(
-            origin: DisplayList.Ahead.origin(
+        item.ahead = DisplayList.Ahead.make(
+            origin: DisplayList.Ahead.motion(
                 positionSamples,
                 offset: origin - position,
                 containerPosition: containerPosition

@@ -347,17 +347,15 @@ struct ShapeStyledDisplayList<V>: StatefulRule, AsyncAttribute where V: ShapeSty
             layers: &layers
         )
         var list = layers.commit(shape: &renderedShape, options: options)
-        if positionSamples?.own.samples != nil {
-            list.describe { item in
-                DisplayList.Ahead(
-                    origin: DisplayList.Ahead.origin(
-                        positionSamples,
-                        offset: item.frame.origin - position,
-                        containerPosition: containerPosition
-                    ),
-                    effect: nil
-                )
-            }
+        list.describe { item in
+            DisplayList.Ahead.make(
+                origin: DisplayList.Ahead.motion(
+                    positionSamples,
+                    offset: item.frame.origin - position,
+                    containerPosition: containerPosition
+                ),
+                effect: nil
+            )
         }
         value = list
     }
