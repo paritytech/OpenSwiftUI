@@ -914,6 +914,17 @@ if renderGTKCondition {
     openSwiftUITarget.swiftSettings = (openSwiftUITarget.swiftSettings ?? []) + [.define("OPENSWIFTUI_GTK")]
 }
 
+// The layer host: instead of drawing, views become layers that a compositor process draws
+// and animates (LayerKit, a Core Animation-shaped client library). LayerKit is not published
+// yet, so this is opt-in: point OPENSWIFTUI_LAYERKIT_PATH at a checkout of its package.
+// It shares the GTK host's text code, so it needs RENDER_GTK as well.
+if renderGTKCondition, let layerKitPath = envStringValue("LAYERKIT_PATH"), !layerKitPath.isEmpty {
+    package.dependencies.append(.package(path: layerKitPath))
+    let layerKitPackage = String(layerKitPath.split(separator: "/").last ?? "")
+    openSwiftUITarget.dependencies.append(.product(name: "LayerKit", package: layerKitPackage))
+    openSwiftUITarget.swiftSettings = (openSwiftUITarget.swiftSettings ?? []) + [.define("OPENSWIFTUI_LAYERS")]
+}
+
 if !buildForDarwinPlatform {
     // Off Darwin there is no system SwiftUI, so app sources can say `import SwiftUI` unchanged.
     package.targets.append(

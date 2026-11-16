@@ -51,6 +51,9 @@ public struct ScrollView<Content>: View where Content: View {
             // The scroll axes get no size limit; the other axis keeps the viewport's.
             .fixedSize(horizontal: axes.contains(.horizontal), vertical: axes.contains(.vertical))
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { contentSize = $0 }
+            // One group for the content: scrolling then moves a single item of the display
+            // list instead of changing the position of everything in it.
+            .geometryGroup()
             .modifier(ScrollOffsetModifier(
                 offset: offset,
                 presentation: presentation,
@@ -131,6 +134,12 @@ public struct ScrollView<Content>: View where Content: View {
 
     /// Lets go of the content moving at `velocity` points per second.
     private func release(velocity: CGSize) {
+        // Two touches reported for the same instant make a speed that is infinite or not a
+        // number at all. Nothing real scrolls faster than this.
+        func bounded(_ speed: CGFloat) -> CGFloat {
+            speed.isNaN ? 0 : min(max(speed, -maximumFlickSpeed), maximumFlickSpeed)
+        }
+        let velocity = CGSize(width: bounded(velocity.width), height: bounded(velocity.height))
         let coast = CGSize(
             width: offset.width + velocity.width / ScrollDeceleration.rate,
             height: offset.height + velocity.height / ScrollDeceleration.rate
@@ -163,6 +172,8 @@ public struct ScrollView<Content>: View where Content: View {
 
 /// How long after the last movement a lift still counts as a flick, in seconds.
 private let flickTimeout: TimeInterval = 0.1
+/// The fastest a flick is taken to be, in points per second.
+private let maximumFlickSpeed: CGFloat = 20_000
 
 // MARK: - Presentation
 

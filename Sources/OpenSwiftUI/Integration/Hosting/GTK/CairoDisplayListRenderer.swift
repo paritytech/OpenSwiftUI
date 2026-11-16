@@ -234,7 +234,8 @@ struct CairoDisplayListRenderer {
     }
 }
 
-private struct PaintVisitor: ResolvedPaintVisitor {
+/// Reads the kind of a resolved paint. Shared with the layer host.
+struct PaintVisitor: ResolvedPaintVisitor {
     enum Paint {
         case color(Color.Resolved)
         case linearGradient(ResolvedGradient, UnitPoint, UnitPoint)

@@ -2,8 +2,9 @@
 //  GTKHostingView.swift
 //  OpenSwiftUI
 //
-//  Hosts one OpenSwiftUI view graph in a GTK4 window: the Linux counterpart of
-//  UIHostingView. Modelled on upstream's experimental SDLHostingView.
+//  Hosts one OpenSwiftUI view graph on Linux: the counterpart of UIHostingView. Modelled on
+//  upstream's experimental SDLHostingView. It evaluates the graph and hands out display
+//  lists; the GTK window paints them with Cairo, and the layer host turns them into layers.
 
 #if OPENSWIFTUI_GTK
 import CGtk
@@ -28,6 +29,8 @@ final class GTKHostingView: ViewRendererHost, ViewGraphRenderHost, EventGraphHos
 
     private var displayList = DisplayList()
     private var needsDisplay = true
+    /// Called, possibly off the main thread, when the graph asks to be evaluated again.
+    var updateRequested: (() -> Void)?
     /// Latest frame-clock time, in seconds.
     private var clock = 0.0
     private var lastRenderClock: Double?
@@ -65,6 +68,18 @@ final class GTKHostingView: ViewRendererHost, ViewGraphRenderHost, EventGraphHos
         clock = time
         renderIfNeeded()
         return needsDisplay
+    }
+
+    /// The display list to show, when it changed since it was last taken.
+    func takeDisplayList() -> DisplayList? {
+        guard needsDisplay else { return nil }
+        needsDisplay = false
+        return displayList
+    }
+
+    /// The graph has asked for an evaluation that is still to come.
+    var hasPendingUpdate: Bool {
+        deadlineLock.withLock { deadline < .infinity }
     }
 
     func draw(_ cr: OpaquePointer) {
@@ -135,6 +150,7 @@ final class GTKHostingView: ViewRendererHost, ViewGraphRenderHost, EventGraphHos
         deadlineLock.withLock {
             deadline = min(deadline, clock + max(delay, 0))
         }
+        updateRequested?()
     }
 
     func updateRootView() { viewGraph.setRootView(Self.makeRootView(rootView)) }

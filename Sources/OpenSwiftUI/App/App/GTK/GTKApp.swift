@@ -2,7 +2,10 @@
 //  GTKApp.swift
 //  OpenSwiftUI
 //
-//  Launches an `App` in a GTK4 window: the Linux counterpart of the UIKit/AppKit app delegates.
+//  Launches an `App` on Linux: the counterpart of the UIKit/AppKit app delegates. The app gets
+//  a GTK4 window, unless the package was built with the layer host and a layer compositor is
+//  listening, in which case the compositor shows it (LayerApp.swift). `OPENSWIFTUI_HOST=gtk`
+//  or `=layers` insists on one of the two.
 //
 //  Set `OPENSWIFTUI_GTK_CAPTURE_DIR` to render offscreen instead: frames are written there as
 //  PNGs on a virtual clock (`OPENSWIFTUI_GTK_CAPTURE_FRAMES`, default 60, at
@@ -33,6 +36,17 @@ func runGTKApp(_ app: some App) -> Never {
     }
     let processInfo = ProcessInfo.processInfo
     let environment = processInfo.environment
+    #if OPENSWIFTUI_LAYERS
+    let wantedHost = environment["OPENSWIFTUI_HOST"]
+    if wantedHost != "gtk", environment["OPENSWIFTUI_GTK_CAPTURE_DIR"] == nil {
+        if connectToLayerCompositor() {
+            runLayerApp(item)
+        } else if wantedHost == "layers" {
+            print("OpenSwiftUI: no layer compositor is listening")
+            exit(1)
+        }
+    }
+    #endif
     let session = GTKSession(
         host: GTKHostingView(rootView: item.value.view, environment: item.environment),
         script: scriptedPointer(from: environment["OPENSWIFTUI_GTK_CAPTURE_POINTER"])
