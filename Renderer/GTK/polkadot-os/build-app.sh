@@ -15,16 +15,22 @@
 # The program is built for Alpine 3.22 and musl, and links Swift's runtime into itself. Of the
 # phone it needs the packages gtk4.0 and libstdc++, and a font.
 #
-# On a phone, for one user:
+# On a phone, for one user. ~/.local/share/polkadot-os also holds the host service's account
+# store and has to stay mode 700 (polkadot-os's AGENTS.md): a plain mkdir -p makes it 755 when
+# it is not there yet, hence the chmod.
 #
 #   sudo apk add gtk4.0 libstdc++
-#   mkdir -p ~/.local/share/polkadot-os/apps
+#   mkdir -p ~/.local/share/polkadot-os/apps && chmod 700 ~/.local/share/polkadot-os
 #   tar -xzf swiftui-kitchen-sink-aarch64.tar.gz -C ~/.local/share/polkadot-os/apps
 #
-# Home shows it the next time it is shown. In a release, from a polkadot-os checkout:
+# Home shows it the next time it is shown. Or in a bundle of your own, packed in a polkadot-os
+# checkout from binaries built there:
 #
 #   tools/phone/bundle.sh pack ... --app <output directory>/swiftui-kitchen-sink \
 #       --package gtk4.0 --package libstdc++
+#
+# It cannot be a line of polkadot-os's release/built-apps as it is: those apps are built from
+# source on Alpine aarch64 by the bundle build, and Swift has no toolchain that runs on Alpine.
 
 set -euo pipefail
 
