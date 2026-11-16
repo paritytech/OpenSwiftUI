@@ -6,6 +6,7 @@ let package = Package(
     name: "GTKRenderer",
     products: [
         .executable(name: "ExampleApp", targets: ["ExampleApp"]),
+        .executable(name: "KitchenSink", targets: ["KitchenSink"]),
     ],
     dependencies: [
         .package(path: "../.."),
@@ -17,6 +18,13 @@ let package = Package(
                 .product(name: "SwiftUI", package: "OpenSwiftUI"),
             ],
             path: "ExampleApp"
+        ),
+        .executableTarget(
+            name: "KitchenSink",
+            dependencies: [
+                .product(name: "SwiftUI", package: "OpenSwiftUI"),
+            ],
+            path: "KitchenSink"
         ),
     ]
 )

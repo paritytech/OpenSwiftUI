@@ -226,7 +226,13 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
     /// What the description in `samplesBox` was made from: it is made again when the
     /// animation changes course or the value it is heading for changes. An animation found
     /// to have no description, such as one that never ends, has none wherever it is heading.
-    private var described: (generation: UInt32, target: Value.AnimatableData, isDescribed: Bool)? = nil
+    /// `elapsed` is how far into the animation its first value is.
+    private var described: (
+        generation: UInt32,
+        target: Value.AnimatableData,
+        isDescribed: Bool,
+        elapsed: Double
+    )? = nil
 
     package init(
         phase: Attribute<_GraphInputs.Phase>,
@@ -367,6 +373,11 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
         samplesBox.isAnimating = true
         if let described, described.generation == animatorState.generation,
            !described.isDescribed || described.target == target {
+            // An animation's clock starts when it is first evaluated, and is set again at
+            // its second evaluation. The description keeps to that clock.
+            if let start = animatorState.startTime, samplesBox.samples != nil {
+                samplesBox.samples?.time = start + described.elapsed
+            }
             return
         }
         let values = animatorState.valuesAhead(
@@ -375,11 +386,17 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
             limit: AnimationSamples<Value.AnimatableData>.limit,
             environment: environment
         )
-        described = (animatorState.generation, target, values != nil)
+        let elapsed = animatorState.evaluatedElapsed
+        described = (animatorState.generation, target, values != nil, elapsed)
+        // An animation made while an event is handled, outside a frame, has not been
+        // evaluated yet: its clock starts at the frame that follows, and the time here is
+        // still the last frame's. The time is put right at that frame, above, before
+        // anything reads it.
+        let time = animatorState.startTime.map { $0 + elapsed } ?? time
         samplesBox.samples = values.map { values in
             AnimationSamples(
                 seed: AnimationSamples<Value.AnimatableData>.makeSeed(),
-                time: Graph.withoutUpdate { time },
+                time: time,
                 step: AnimationSamples<Value.AnimatableData>.step,
                 values: values
             )
@@ -444,7 +461,12 @@ final package class AnimatorState<V> where V: VectorArithmetic {
     package private(set) var generation: UInt32 = 0
 
     /// How far into the animation it was last evaluated.
-    private var evaluatedElapsed: Double = 0
+    package private(set) var evaluatedElapsed: Double = 0
+
+    /// When the animation's clock started. Nil until it is first evaluated.
+    package var startTime: Time? {
+        phase == .pending ? nil : beginTime
+    }
 
     private var reason: UInt32? = nil
 
