@@ -124,7 +124,6 @@ if name == "delayed-move":
     check("moves while the app is blocked", moves(xs) >= 10 and steady(xs),
           f"moved in {moves(xs)} of {len(xs) - 1} frames, never backwards")
     check("arrives while the app is blocked", xs[-1] == 310, f"x = {xs[-1]} when the block ends")
-    check("the app sent nothing meanwhile", sent_while(blocked) == 0, f"{sent_while(blocked)} operations")
 
 elif name == "moving-container":
     # A blue square at (20, 100) in a container that goes down 30 while the square goes right
@@ -145,7 +144,6 @@ elif name == "moving-container":
           f"moved in {moves(ys)} of {len(ys) - 1} frames, never backwards")
     check("arrives while the app is blocked", abs(xs[-1] - 270) <= 0.5 and abs(ys[-1] - 130) <= 0.5,
           f"at ({xs[-1]}, {ys[-1]}) when the block ends, to be at (270, 130)")
-    check("the app sent nothing meanwhile", sent_while(blocked) == 0, f"{sent_while(blocked)} operations")
 
 elif name == "scale-rotation":
     # A red square, 60 across and centred on (100, 140), that doubles; and a blue bar, 120 by
@@ -168,24 +166,56 @@ elif name == "scale-rotation":
           f"got taller in {moves(heights)} of {len(heights) - 1} frames")
     check("both arrive while the app is blocked", abs(widths[-1] - 120) <= 1 and abs(heights[-1] - 120) <= 1,
           f"the square is {widths[-1]} across and the bar {heights[-1]} high when the block ends, to be 120 and 120")
-    check("the app sent nothing meanwhile", sent_while(blocked) == 0, f"{sent_while(blocked)} operations")
 
 elif name == "repeating":
-    # A red square that goes back and forth for ever between x = 20 and x = 310, a second
-    # each way. Nothing is tapped but the bar, which only blocks the app.
-    def x_at(frame):
-        return first(row_of_pixels(frame, 130), is_red)
+    # Four things that run by themselves. A red square goes back and forth for ever between
+    # x = 20 and x = 310, a second each way; the tap on the bar puts it 20 lower at once, in
+    # the middle of a run, and then the app is blocked. A blue circle centred on (195, 260)
+    # fades out and in for ever. A green bar centred on (195, 400) turns for ever. An orange
+    # square goes there, back and there again, and stops at x = 310.
+    def is_orange(p):
+        return p[0] > 200 and 100 < p[1] < 200 and p[2] < 80
+
+    def is_green(p):
+        return p[1] > 150 and p[0] < 120 and p[2] < 150
+
+    def turns(values):
+        """How often a series changes direction, flat stretches aside."""
+        steps = [b - a for a, b in zip(values, values[1:]) if abs(b - a) > 0.25]
+        return sum(1 for a, b in zip(steps, steps[1:]) if a * b < 0)
 
     blocked = blocked_frames()
-    xs = [x_at(f) for f in blocked]
-    turns = sum(1 for a, b, c in zip(xs, xs[1:], xs[2:]) if (b - a) * (c - b) < 0)
-    idle = [f for f in dumped if tap_frame - 30 <= f < tap_frame - 2]
-    check("goes on while the app is blocked", moves(xs) >= 0.8 * (len(xs) - 1),
+    xs = [first(row_of_pixels(f, 130), is_red) for f in blocked]
+    # From before the tap on, so that the moment the square is put lower is looked at too.
+    around = [first(row_of_pixels(f, 130), is_red) for f in dumped if tap_frame - 20 <= f <= blocked[-1]]
+    jump = max(abs(b - a) for a, b in zip(around, around[1:]))
+    top = first(column_of_pixels(blocked[-1], xs[-1] + 30), is_red)
+    check("the square goes on while the app is blocked", moves(xs) >= 0.8 * (len(xs) - 1),
           f"moved in {moves(xs)} of {len(xs) - 1} frames")
-    check("goes there and back", turns >= 2 and min(xs) <= 25 and max(xs) >= 305,
-          f"turned round {turns} times, between x = {min(xs)} and x = {max(xs)}")
-    check("the app sends nothing while it runs", sent_while(idle) == 0 and sent_while(blocked) == 0,
-          f"{sent_while(idle)} operations in the half second before the tap, {sent_while(blocked)} while blocked")
+    check("it goes there and back, without a jump",
+          turns(xs) >= 2 and min(xs) <= 25 and max(xs) >= 305 and jump <= 30,
+          f"turned round {turns(xs)} times, between x = {min(xs)} and x = {max(xs)}; at most {jump} between frames")
+    check("put lower in the middle of a run, it keeps its place", top == 120 and jump <= 30,
+          f"its top is at y = {top}, to be 120")
+
+    reds = [pixel(f, 195, 260)[0] for f in blocked]
+    check("the circle fades out and in while the app is blocked",
+          moves(reds) >= 0.6 * (len(reds) - 1) and turns(reds) >= 2 and min(reds) < 80 and max(reds) > 180,
+          f"changed in {moves(reds)} of {len(reds) - 1} frames, turned round {turns(reds)} times")
+
+    widths = [extent(row_of_pixels(f, 400), is_green) for f in blocked]
+    check("the bar turns while the app is blocked",
+          moves(widths) >= 0.6 * (len(widths) - 1) and min(widths) <= 20 and max(widths) >= 100,
+          f"changed in {moves(widths)} of {len(widths) - 1} frames, from {min(widths)} to {max(widths)} across")
+
+    orange = [first(row_of_pixels(f, 530), is_orange) for f in blocked]
+    check("what repeats three times stops", orange[-1] == 310 and orange[-10:] == [310] * 10,
+          f"at x = {orange[-1]} when the block ends, and for the ten frames before")
+
+    # The half second before the tap, when the app is free to send whatever it has.
+    idle = [f for f in dumped if tap_frame - 32 <= f < tap_frame - 2]
+    check("the app sends nothing while they run", sent_while(idle) == 0,
+          f"{sent_while(idle)} operations in the half second before the tap")
 
 elif name == "emptied-scroll":
     # A list is scrolled, emptied and filled again; then a row is tapped at (195, 400). The

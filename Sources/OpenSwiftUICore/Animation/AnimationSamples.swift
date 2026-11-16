@@ -32,9 +32,9 @@ package import OpenAttributeGraphShims
 // MARK: - AnimationSamples
 
 /// The values an animation will take, `step` seconds apart, the first being its value at
-/// `time`, when the description was made, and the last where it comes to rest. When the
-/// animation repeats for ever, they are one round of it instead: the last is the first again,
-/// and after it the round starts over.
+/// `time`, and the last where it comes to rest. When the animation repeats for ever, they are
+/// one round of it instead, begun at `time`, which may be past: after the last value the
+/// round starts over from the first.
 package struct AnimationSamples<Data> {
     /// Changes whenever the animation starts again or changes course. No two descriptions
     /// share one, whichever animations they are of.
@@ -171,8 +171,8 @@ extension DisplayList {
     /// What will happen to an item, as far as it has been described.
     package final class Ahead {
         /// One property's values to come, the first being the value at `time`; when
-        /// `repeats`, one round of values that come round for ever. They are worked out only
-        /// when asked for: the host asks once for each `seed`.
+        /// `repeats`, one round of values, begun at `time`, that starts over for ever. They
+        /// are worked out only when asked for: the host asks once for each `seed`.
         package struct Track<Value> {
             package var seed: UInt32
             package var time: Time

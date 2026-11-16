@@ -386,9 +386,8 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
             limit: AnimationSamples<Value.AnimatableData>.limit,
             environment: environment
         )
-        // A round is described from the animation's second value on; see `valuesAhead`.
-        let elapsed = animatorState.evaluatedElapsed
-            + (ahead?.repeats == true ? AnimationSamples<Value.AnimatableData>.step : 0)
+        // A round began `phase` ago; an animation that ends is described from now.
+        let elapsed = animatorState.evaluatedElapsed - (ahead?.phase ?? 0)
         described = (animatorState.generation, target, ahead != nil, elapsed)
         // An animation made while an event is handled, outside a frame, has not been
         // evaluated yet: its clock starts at the frame that follows, and the time here is
@@ -401,7 +400,7 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
                 time: time,
                 step: AnimationSamples<Value.AnimatableData>.step,
                 values: ahead.values,
-                repeats: ahead.repeats
+                repeats: ahead.phase != nil
             )
         }
     }
@@ -703,26 +702,30 @@ final package class AnimatorState<V> where V: VectorArithmetic {
         return false
     }
 
-    /// The values the animation will take from where it was last evaluated, `step` seconds
-    /// apart. Either they end with `target`, the value it is heading for, or the animation
-    /// repeats for ever and they are one round of it, ending as it begins. Nil when it
-    /// neither ends nor comes round again within `limit` values. Nothing about the animation
-    /// changes.
+    /// The values the animation will take, `step` seconds apart. For one that ends they are
+    /// its values from where it was last evaluated, ending with `target`, the value it is
+    /// heading for. For one that repeats for ever they are one round of it, there or there
+    /// and back, with how far into the round it is. Nil when it neither ends within `limit`
+    /// values nor repeats for ever. Nothing about the animation changes.
     package func valuesAhead(
         target: V,
         step: Double,
         limit: Int,
         environment: Attribute<EnvironmentValues>?
-    ) -> (values: [V], repeats: Bool)? {
+    ) -> (values: [V], phase: Double?)? {
+        func value(_ animated: V) -> V {
+            var value = target
+            value += animated
+            value -= interval
+            return value
+        }
         var context = AnimationContext(
             state: state,
             environment: environment,
             isLogicallyComplete: isLogicallyComplete
         )
+        let runIndex = context.repeatIndex, runStart = context.repeatStart
         var values: [V] = []
-        // The values at which an animation that repeats started again.
-        var restarts: [Int] = []
-        var repeatIndex = context.repeatIndex
         for index in 0 ..< limit {
             guard let animated = animation.animate(
                 value: interval,
@@ -730,38 +733,41 @@ final package class AnimatorState<V> where V: VectorArithmetic {
                 context: &context
             ) else {
                 values.append(target)
-                return (values, false)
+                return (values, nil)
             }
-            var value = target
-            value += animated
-            value -= interval
-            values.append(value)
-            if context.repeatIndex != repeatIndex {
-                repeatIndex = context.repeatIndex
-                restarts.append(index)
-            }
+            values.append(value(animated))
         }
-        // It has not ended. One that repeats starts again at every frame its base ends at,
-        // so, a fixed step apart, its values come round exactly: after one run when every
-        // run goes the same way, after two when they go there and back. The round is taken
-        // from the second value on. The very first value of an animation that runs the same
-        // way every time is its start, and never comes again: at the frame a run ends the
-        // value is the end, and the frame after is already a step into the next run.
-        for later in restarts.dropFirst().prefix(2) {
-            let period = later - restarts[0]
-            guard period > 0, 2 * period + 1 < values.count else {
-                break
-            }
-            let comesRound = (1 ... period).allSatisfy { index in
-                var difference = values[index + period]
-                difference -= values[index]
-                return difference.magnitudeSquared < 1e-6
-            }
-            if comesRound {
-                return (Array(values[1 ... period + 1]), true)
-            }
+        // It has not ended. The values above are no use for one that repeats: it starts
+        // again at whichever frame its base is found to have ended at, so its runs are not
+        // all of one length, and the values never quite come round. The round is made from
+        // one run instead, taken from its start: there, or there and back.
+        guard case let .repeat(count, autoreverses, _) = animation.function, count == .infinity else {
+            return nil
         }
-        return nil
+        var fresh = AnimationContext(state: AnimationState<V>(), environment: environment, isLogicallyComplete: false)
+        var run: [V] = []
+        while fresh.repeatIndex == 0, run.count < limit / 2 {
+            guard let animated = animation.animate(
+                value: interval,
+                time: Double(run.count) * step,
+                context: &fresh
+            ) else {
+                return nil
+            }
+            run.append(value(animated))
+        }
+        guard fresh.repeatIndex != 0, run.count > 1 else {
+            return nil
+        }
+        let runLength = Double(run.count - 1) * step
+        let round = autoreverses ? run + run.dropLast().reversed() : run
+        // Where in the round the animation is: so far into its present run, which is a run
+        // back when it goes there and back and has started again an odd number of times.
+        var phase = min(max(evaluatedElapsed - runStart, 0), runLength)
+        if autoreverses, runIndex % 2 == 1 {
+            phase += runLength
+        }
+        return (round, phase)
     }
 
     package func nextUpdate() {

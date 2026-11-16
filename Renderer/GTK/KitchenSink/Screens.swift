@@ -335,21 +335,24 @@ struct ScaleRotationScreen: View {
 
 struct RepeatingScreen: View {
     @State private var running = false
+    @State private var lowered = false
 
     var body: some View {
-        Stage(goTitle: "Nothing to do: these run by themselves", go: {}) {
-            // Goes back and forth for ever, between x = 20 and x = 310.
+        Stage(goTitle: "Move the square down", go: { lowered.toggle() }) {
+            // Goes back and forth for ever, between x = 20 and x = 310. "Go" puts it 20
+            // lower at once, in the middle of a run, which must not make it lose its place.
             Rectangle()
                 .fill(Color(red: 0.9, green: 0.1, blue: 0.1))
                 .frame(width: 60, height: 60)
                 .offset(x: running ? 310 : 20, y: 100)
                 .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: running)
+                .offset(y: lowered ? 20 : 0)
             // Fades out and in for ever.
             Circle()
                 .fill(Color(red: 0.1, green: 0.2, blue: 0.9))
                 .frame(width: 80, height: 80)
                 .opacity(running ? 0.15 : 1)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: running)
+                .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: running)
                 .offset(x: 155, y: 220)
             // Turns for ever, always the same way.
             Rectangle()

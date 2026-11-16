@@ -166,8 +166,12 @@ extension AnimationContext {
         set { state[RepeatState.self] = newValue }
     }
 
-    /// How many times an animation that repeats has started again.
+    /// How many times an animation that repeats has started again, and when it last did.
     package var repeatIndex: Int {
         repeatState.index
+    }
+
+    package var repeatStart: Double {
+        repeatState.timeOffset
     }
 }
