@@ -32,7 +32,9 @@ package import OpenAttributeGraphShims
 // MARK: - AnimationSamples
 
 /// The values an animation will take, `step` seconds apart, the first being its value at
-/// `time`, when the description was made, and the last where it comes to rest.
+/// `time`, when the description was made, and the last where it comes to rest. When the
+/// animation repeats for ever, they are one round of it instead: the last is the first again,
+/// and after it the round starts over.
 package struct AnimationSamples<Data> {
     /// Changes whenever the animation starts again or changes course. No two descriptions
     /// share one, whichever animations they are of.
@@ -40,6 +42,7 @@ package struct AnimationSamples<Data> {
     package var time: Time
     package var step: Double
     package var values: [Data]
+    package var repeats = false
 
     /// How far ahead an animation is described. One that has not ended by then is not
     /// described at all.
@@ -167,18 +170,27 @@ package enum AnimationDescriptions {
 extension DisplayList {
     /// What will happen to an item, as far as it has been described.
     package final class Ahead {
-        /// One property's values to come, the first being the value at `time`. They are
-        /// worked out only when asked for: the host asks once for each `seed`.
+        /// One property's values to come, the first being the value at `time`; when
+        /// `repeats`, one round of values that come round for ever. They are worked out only
+        /// when asked for: the host asks once for each `seed`.
         package struct Track<Value> {
             package var seed: UInt32
             package var time: Time
             package var step: Double
+            package var repeats: Bool
             package var values: () -> [Value]
 
-            package init(seed: UInt32, time: Time, step: Double, values: @escaping () -> [Value]) {
+            package init(
+                seed: UInt32,
+                time: Time,
+                step: Double,
+                repeats: Bool = false,
+                values: @escaping () -> [Value]
+            ) {
                 self.seed = seed
                 self.time = time
                 self.step = step
+                self.repeats = repeats
                 self.values = values
             }
         }
@@ -248,11 +260,13 @@ extension DisplayList {
                 return origin
             }
             guard let containerBox, containerBox.isAnimating else {
-                return .described(Track(seed: own.seed, time: own.time, step: own.step) {
+                return .described(Track(seed: own.seed, time: own.time, step: own.step, repeats: own.repeats) {
                     own.values.map { origin($0) + offset }
                 })
             }
-            guard let container = containerBox.samples else {
+            guard let container = containerBox.samples, !own.repeats, !container.repeats else {
+                // Not described, or two movements of which one comes round for ever: one
+                // list of values cannot say where that leaves the item.
                 return .sampled
             }
             // Both move. The two descriptions may have been made at different times: they
@@ -311,11 +325,15 @@ extension DisplayList {
                 motion = .still
             // The values are for another place than before, so the seed is another too.
             case let (track?, nil):
-                motion = .described(Track(seed: track.seed &* 0x85EB_CA6B &+ 1, time: track.time, step: track.step) {
+                motion = .described(Track(
+                    seed: track.seed &* 0x85EB_CA6B &+ 1, time: track.time, step: track.step, repeats: track.repeats
+                ) {
                     track.values().map { CGPoint(x: $0.x + innerOrigin.x, y: $0.y + innerOrigin.y) }
                 })
             case let (nil, track?):
-                motion = .described(Track(seed: track.seed &* 0x85EB_CA6B &+ 2, time: track.time, step: track.step) {
+                motion = .described(Track(
+                    seed: track.seed &* 0x85EB_CA6B &+ 2, time: track.time, step: track.step, repeats: track.repeats
+                ) {
                     track.values().map { CGPoint(x: $0.x + outerOrigin.x, y: $0.y + outerOrigin.y) }
                 })
             case (_?, _?):

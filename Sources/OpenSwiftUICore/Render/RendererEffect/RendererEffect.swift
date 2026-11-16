@@ -142,7 +142,9 @@ extension RendererEffect {
                 guard let samples = samples.samples else {
                     return nil
                 }
-                return DisplayList.Ahead.Track(seed: samples.seed, time: samples.time, step: samples.step) {
+                return DisplayList.Ahead.Track(
+                    seed: samples.seed, time: samples.time, step: samples.step, repeats: samples.repeats
+                ) {
                     samples.values.map { data in
                         var effect = effect
                         effect.animatableData = data

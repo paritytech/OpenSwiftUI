@@ -237,7 +237,9 @@ public struct NavigationStack<Data, Root>: View where Root: View {
                     update(id) { $0.isTitleCollapsed = collapsed }
                 }
             }
-            .overlay(Color.black.opacity(0.1 * covered).allowsHitTesting(false))
+            // The dimming is an opacity, not a colour of varying strength: a host that runs
+            // animations by itself can be handed an opacity, and not a change of colour.
+            .overlay(Color.black.opacity(0.1).opacity(Double(covered)).allowsHitTesting(false))
             // Whatever appears in the screen while it slides in, such as a title that is
             // reported a frame late, appears where the screen is and not where it is going.
             .geometryGroup()

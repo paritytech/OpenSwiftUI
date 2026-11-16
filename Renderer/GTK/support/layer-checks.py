@@ -51,6 +51,11 @@ def first(pixels, wanted):
     return None
 
 
+def extent(pixels, wanted):
+    """How many points of the row or column `wanted` accepts."""
+    return sum(1 for pixel in pixels if wanted(pixel)) / scale
+
+
 def pixel(frame, x, y):
     return row_of_pixels(frame, y)[int(x * scale)]
 
@@ -141,6 +146,46 @@ elif name == "moving-container":
     check("arrives while the app is blocked", abs(xs[-1] - 270) <= 0.5 and abs(ys[-1] - 130) <= 0.5,
           f"at ({xs[-1]}, {ys[-1]}) when the block ends, to be at (270, 130)")
     check("the app sent nothing meanwhile", sent_while(blocked) == 0, f"{sent_while(blocked)} operations")
+
+elif name == "scale-rotation":
+    # A red square, 60 across and centred on (100, 140), that doubles; and a blue bar, 120 by
+    # 20 and centred on (280, 140), that turns a quarter and so ends up standing.
+    def width(frame):
+        return extent(row_of_pixels(frame, 140), is_red)
+
+    def height(frame):
+        return extent(column_of_pixels(frame, 280), is_blue)
+
+    blocked = blocked_frames()
+    before = [f for f in dumped if f < tap_frame][-1]
+    widths, heights = [width(f) for f in blocked], [height(f) for f in blocked]
+    check("starts as it should", (width(before), height(before)) == (60, 20),
+          f"the square is {width(before)} across and the bar {height(before)} high before the tap")
+    check("the square grows while the app is blocked", moves(widths) >= 10 and steady(widths),
+          f"grew in {moves(widths)} of {len(widths) - 1} frames, never shrinking")
+    # The bar is as tall as it gets well before it stands: only its first steps show here.
+    check("the bar turns while the app is blocked", moves(heights) >= 5 and steady(heights, 1),
+          f"got taller in {moves(heights)} of {len(heights) - 1} frames")
+    check("both arrive while the app is blocked", abs(widths[-1] - 120) <= 1 and abs(heights[-1] - 120) <= 1,
+          f"the square is {widths[-1]} across and the bar {heights[-1]} high when the block ends, to be 120 and 120")
+    check("the app sent nothing meanwhile", sent_while(blocked) == 0, f"{sent_while(blocked)} operations")
+
+elif name == "repeating":
+    # A red square that goes back and forth for ever between x = 20 and x = 310, a second
+    # each way. Nothing is tapped but the bar, which only blocks the app.
+    def x_at(frame):
+        return first(row_of_pixels(frame, 130), is_red)
+
+    blocked = blocked_frames()
+    xs = [x_at(f) for f in blocked]
+    turns = sum(1 for a, b, c in zip(xs, xs[1:], xs[2:]) if (b - a) * (c - b) < 0)
+    idle = [f for f in dumped if tap_frame - 30 <= f < tap_frame - 2]
+    check("goes on while the app is blocked", moves(xs) >= 0.8 * (len(xs) - 1),
+          f"moved in {moves(xs)} of {len(xs) - 1} frames")
+    check("goes there and back", turns >= 2 and min(xs) <= 25 and max(xs) >= 305,
+          f"turned round {turns} times, between x = {min(xs)} and x = {max(xs)}")
+    check("the app sends nothing while it runs", sent_while(idle) == 0 and sent_while(blocked) == 0,
+          f"{sent_while(idle)} operations in the half second before the tap, {sent_while(blocked)} while blocked")
 
 elif name == "emptied-scroll":
     # A list is scrolled, emptied and filled again; then a row is tapped at (195, 400). The

@@ -13,11 +13,43 @@ package import OpenSwiftUICore
 
 /// Shared by one scroll view and the host that scrolls for it.
 package final class CompositorScrollHandle {
-    /// The host moved the content: its new offset, and whether it is now at rest. Called on
-    /// the main thread.
+    /// The scroll view's part: it is told where the content is and whether it is at rest.
+    /// Called on the main thread.
     package var moved: ((_ offset: CGSize, _ isAtRest: Bool) -> Void)?
 
+    /// The longest the scroll view goes without hearing of content that is moving.
+    private static let interval = 0.1
+    private var lastTold = 0.0
+    private var untold: CGSize?
+    private var isWaiting = false
+
     package init() {}
+
+    /// The host's part: the compositor has moved the content, to be called on the main
+    /// thread. The scroll view wants the offset for layout and hit testing, not to draw, so
+    /// while the content moves it hears of it ten times a second and not every frame; it
+    /// hears at once of content that has come to rest.
+    package func report(_ offset: CGSize, isAtRest: Bool) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard !isAtRest, now - lastTold < Self.interval else {
+            untold = nil
+            lastTold = now
+            moved?(offset, isAtRest)
+            return
+        }
+        untold = offset
+        guard !isWaiting else { return }
+        isWaiting = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.interval - (now - lastTold)) { [weak self] in
+            guard let self else { return }
+            self.isWaiting = false
+            if let offset = self.untold {
+                self.untold = nil
+                self.lastTold = ProcessInfo.processInfo.systemUptime
+                self.moved?(offset, false)
+            }
+        }
+    }
 }
 
 /// Marks a scroll view's viewport. The views inside are placed from the viewport's corner.

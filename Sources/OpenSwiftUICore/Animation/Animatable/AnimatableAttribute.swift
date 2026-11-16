@@ -380,25 +380,28 @@ package struct AnimatableAttributeHelper<Value> where Value: Animatable {
             }
             return
         }
-        let values = animatorState.valuesAhead(
+        let ahead = animatorState.valuesAhead(
             target: target,
             step: AnimationSamples<Value.AnimatableData>.step,
             limit: AnimationSamples<Value.AnimatableData>.limit,
             environment: environment
         )
+        // A round is described from the animation's second value on; see `valuesAhead`.
         let elapsed = animatorState.evaluatedElapsed
-        described = (animatorState.generation, target, values != nil, elapsed)
+            + (ahead?.repeats == true ? AnimationSamples<Value.AnimatableData>.step : 0)
+        described = (animatorState.generation, target, ahead != nil, elapsed)
         // An animation made while an event is handled, outside a frame, has not been
         // evaluated yet: its clock starts at the frame that follows, and the time here is
         // still the last frame's. The time is put right at that frame, above, before
         // anything reads it.
         let time = animatorState.startTime.map { $0 + elapsed } ?? time
-        samplesBox.samples = values.map { values in
+        samplesBox.samples = ahead.map { ahead in
             AnimationSamples(
                 seed: AnimationSamples<Value.AnimatableData>.makeSeed(),
                 time: time,
                 step: AnimationSamples<Value.AnimatableData>.step,
-                values: values
+                values: ahead.values,
+                repeats: ahead.repeats
             )
         }
     }
@@ -701,20 +704,25 @@ final package class AnimatorState<V> where V: VectorArithmetic {
     }
 
     /// The values the animation will take from where it was last evaluated, `step` seconds
-    /// apart and ending with `target`, the value it is heading for. Nil when it does not end
-    /// within `limit` values. Nothing about the animation changes.
+    /// apart. Either they end with `target`, the value it is heading for, or the animation
+    /// repeats for ever and they are one round of it, ending as it begins. Nil when it
+    /// neither ends nor comes round again within `limit` values. Nothing about the animation
+    /// changes.
     package func valuesAhead(
         target: V,
         step: Double,
         limit: Int,
         environment: Attribute<EnvironmentValues>?
-    ) -> [V]? {
+    ) -> (values: [V], repeats: Bool)? {
         var context = AnimationContext(
             state: state,
             environment: environment,
             isLogicallyComplete: isLogicallyComplete
         )
         var values: [V] = []
+        // The values at which an animation that repeats started again.
+        var restarts: [Int] = []
+        var repeatIndex = context.repeatIndex
         for index in 0 ..< limit {
             guard let animated = animation.animate(
                 value: interval,
@@ -722,12 +730,36 @@ final package class AnimatorState<V> where V: VectorArithmetic {
                 context: &context
             ) else {
                 values.append(target)
-                return values
+                return (values, false)
             }
             var value = target
             value += animated
             value -= interval
             values.append(value)
+            if context.repeatIndex != repeatIndex {
+                repeatIndex = context.repeatIndex
+                restarts.append(index)
+            }
+        }
+        // It has not ended. One that repeats starts again at every frame its base ends at,
+        // so, a fixed step apart, its values come round exactly: after one run when every
+        // run goes the same way, after two when they go there and back. The round is taken
+        // from the second value on. The very first value of an animation that runs the same
+        // way every time is its start, and never comes again: at the frame a run ends the
+        // value is the end, and the frame after is already a step into the next run.
+        for later in restarts.dropFirst().prefix(2) {
+            let period = later - restarts[0]
+            guard period > 0, 2 * period + 1 < values.count else {
+                break
+            }
+            let comesRound = (1 ... period).allSatisfy { index in
+                var difference = values[index + period]
+                difference -= values[index]
+                return difference.magnitudeSquared < 1e-6
+            }
+            if comesRound {
+                return (Array(values[1 ... period + 1]), true)
+            }
         }
         return nil
     }

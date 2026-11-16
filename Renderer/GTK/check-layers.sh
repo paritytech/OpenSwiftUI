@@ -38,6 +38,8 @@ flick+=";1904:up:195,384"
 checks=(
     "delayed-move|delayed-move|240|2|$go|150,1400"
     "moving-container|moving-container|240|2|$go|100,1500"
+    "scale-rotation|scale-rotation|240|2|$go|100,1500"
+    "repeating|repeating|300|2|$go|100,2500"
     "emptied-scroll|emptied-scroll|400|5|$flick;4500:down:195,740;4560:up:195,740;6000:down:195,400;6060:up:195,400|"
 )
 

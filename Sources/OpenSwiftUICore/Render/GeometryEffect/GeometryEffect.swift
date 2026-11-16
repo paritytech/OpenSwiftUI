@@ -112,7 +112,11 @@ extension GeometryEffectProvider {
         guard inputs.needsGeometry else {
             return body(_Graph(), inputs)
         }
-        let animatableEffect = Effect.makeAnimatable(value: modifier, inputs: inputs.base)
+        let model = modifier.value
+        var animated = modifier
+        let samples = AnimationDescriptions.areWanted ? AnimationSamplesBox<Effect.AnimatableData>() : nil
+        Effect.makeAnimatable(value: &animated, inputs: inputs.base, samples: samples)
+        let animatableEffect = animated.value
         let transform = Attribute(
             GeometryEffectTransform(
                 effect: animatableEffect,
@@ -140,6 +144,16 @@ extension GeometryEffectProvider {
             let identity = DisplayList.Identity()
             inputs.pushIdentity(identity)
             let (position, positionSamples) = inputs.describedAnimatedPosition()
+            // As for a renderer effect: the rule depends on the seed, so that it hears of a
+            // description of the effect's animation when it is made.
+            var effectSamples: AnimationSamplesBox<Effect.AnimatableData>?
+            var effectSeed = OptionalAttribute<UInt32>()
+            if let samples, animatableEffect.identifier != model.identifier {
+                effectSamples = samples
+                effectSeed = OptionalAttribute(Attribute(
+                    AnimationSamplesSeedRule(model: model, animated: animatableEffect, box: samples)
+                ))
+            }
             let displayList = Attribute(
                 GeometryEffectDisplayList<Self>(
                     identity: .init(),
@@ -149,8 +163,10 @@ extension GeometryEffectProvider {
                     layoutDirection: inputs.layoutDirection,
                     containerPosition: inputs.containerPosition,
                     content: .init(outputs.preferences.displayList),
+                    effectSeed: effectSeed,
                     options: .init(),
-                    positionSamples: positionSamples
+                    positionSamples: positionSamples,
+                    effectSamples: effectSamples
                 )
             )
             outputs.displayList = displayList
@@ -258,8 +274,10 @@ private struct GeometryEffectDisplayList<Provider>: Rule, AsyncAttribute, Custom
     @Attribute var layoutDirection: LayoutDirection
     @Attribute var containerPosition: CGPoint
     @OptionalAttribute var content: DisplayList?
+    @OptionalAttribute var effectSeed: UInt32?
     let options: DisplayList.Options
     let positionSamples: PositionSamples?
+    let effectSamples: AnimationSamplesBox<Provider.Effect.AnimatableData>?
 
     var value: DisplayList {
         let content = content ?? DisplayList()
@@ -267,12 +285,27 @@ private struct GeometryEffectDisplayList<Provider>: Rule, AsyncAttribute, Custom
             return content
         }
         var origin = CGPoint(position - containerPosition)
+        let effect = effect, size = size, layoutDirection = layoutDirection
         let displayListEffect = Provider.resolve(
             effect: effect,
             origin: &origin,
             size: size,
             layoutDirection: layoutDirection
         )
+        var effectTrack: DisplayList.Ahead.Track<DisplayList.Effect>?
+        _ = effectSeed
+        if let samples = effectSamples?.samples {
+            effectTrack = DisplayList.Ahead.Track(
+                seed: samples.seed, time: samples.time, step: samples.step, repeats: samples.repeats
+            ) {
+                samples.values.map { data in
+                    var effect = effect
+                    effect.animatableData = data
+                    var origin = CGPoint.zero
+                    return Provider.resolve(effect: effect, origin: &origin, size: size, layoutDirection: layoutDirection)
+                }
+            }
+        }
         var item = DisplayList.Item(
             .effect(displayListEffect, content),
             frame: CGRect(origin: origin, size: size),
@@ -285,9 +318,13 @@ private struct GeometryEffectDisplayList<Provider>: Rule, AsyncAttribute, Custom
                 offset: origin - position,
                 containerPosition: containerPosition
             ),
-            effect: nil
+            effect: effectTrack
         )
-        item.canonicalize(options: options)
+        // As for a renderer effect: while the host animates the effect, the item stays an
+        // effect, even at a value that does nothing.
+        if effectTrack == nil {
+            item.canonicalize(options: options)
+        }
         return DisplayList(item)
     }
 

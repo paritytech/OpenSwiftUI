@@ -14,6 +14,8 @@
 //  frame by frame, and stops while the app is busy.
 //
 //  OPENSWIFTUI_LAYER_ANIMATIONS=app keeps every animation in the app, to compare.
+//  OPENSWIFTUI_LAYER_SLOW_MS=<milliseconds> reports every turn of the app that took longer
+//  than that, and how long each part of it took.
 
 #if OPENSWIFTUI_LAYERS
 import COpenSwiftUIGTKHost
@@ -75,6 +77,11 @@ private final class LayerSession {
     /// Counts the times the link was put to sleep until an update is due, so that a
     /// wake-up set for an earlier sleep does nothing.
     private var sleeps = 0
+    /// The longest a turn may take before it is reported; nil when none is.
+    private let slowTurn = ProcessInfo.processInfo.environment["OPENSWIFTUI_LAYER_SLOW_MS"]
+        .flatMap(Double.init).map { $0 / 1000 }
+    /// How long the event that led to the turn under way took to handle.
+    private var eventDuration = 0.0
 
     init(host: GTKHostingView, builder: LayerTreeBuilder) {
         self.host = host
@@ -111,12 +118,24 @@ private final class LayerSession {
 
     private func tick(time: Double) {
         clock = max(clock, time)
+        let start = CACurrentMediaTime()
         // State changes are committed by a run-loop observer when the loop goes idle;
         // committing here shows this frame's input in this frame.
         RunLoop.flushObservers()
         _ = host.tick(time: clock)
+        let rendered = CACurrentMediaTime()
         if let displayList = host.takeDisplayList() {
             builder.update(displayList, time: host.currentTimestamp)
+        }
+        if let slowTurn {
+            let end = CACurrentMediaTime()
+            if eventDuration + end - start > slowTurn {
+                let parts = [eventDuration, rendered - start, end - rendered].map { String(format: "%.1f", $0 * 1000) }
+                FileHandle.standardError.write(Data(
+                    "OpenSwiftUI: slow turn: event \(parts[0]) ms, views \(parts[1]) ms, layers \(parts[2]) ms\n".utf8
+                ))
+            }
+            eventDuration = 0
         }
         sleepUntilNextUpdate()
     }
@@ -153,7 +172,9 @@ private final class LayerSession {
         case .ended: OSUI_POINTER_ENDED
         case .cancelled: OSUI_POINTER_CANCELLED
         }
+        let start = CACurrentMediaTime()
         host.pointer(phase: phase, location: touch.location, timestamp: Time(seconds: touch.timestamp))
+        eventDuration = CACurrentMediaTime() - start
         // Answer the touch now rather than at the next frame.
         tick(time: CACurrentMediaTime())
     }

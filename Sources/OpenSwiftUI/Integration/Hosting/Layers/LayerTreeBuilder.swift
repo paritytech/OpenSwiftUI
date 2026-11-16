@@ -46,6 +46,7 @@ final class LayerTreeBuilder {
         /// how far the layer was from the item's origin when the animation was made.
         var position: (seed: UInt32, gap: CGSize)?
         var opacitySeed: UInt32?
+        var transformSeed: UInt32?
 
         init(key: Key, layer: CALayer) {
             self.key = key
@@ -148,10 +149,16 @@ final class LayerTreeBuilder {
         return result
     }
 
+    /// Which of a layer's properties an effect item's description is about.
+    private enum Described {
+        case nothing, opacity, transform
+    }
+
     /// Every property the builder ever sets, each given once, so a layer that an item takes
     /// over from another keeps nothing of its past. `ahead` is the description of the
     /// item's animations, if they are to be the compositor's; `origin` is the item origin
-    /// that `position` was worked out from, and `fades` says the item is an opacity effect.
+    /// that `position` was worked out from, and `effect` says what an effect item's
+    /// description is about.
     private func configure(
         _ entry: Entry,
         bounds: CGRect,
@@ -165,7 +172,7 @@ final class LayerTreeBuilder {
         contentsScale: CGFloat = 1,
         ahead: DisplayList.Ahead? = nil,
         origin: CGPoint = .zero,
-        fades: Bool = false
+        effect: Described = .nothing
     ) {
         let layer = entry.layer
         layer.bounds = bounds
@@ -173,8 +180,8 @@ final class LayerTreeBuilder {
         layer.backgroundColor = background
         layer.cornerRadius = cornerRadius
         layer.masksToBounds = clips
-        fade(entry, to: opacity, track: fades ? ahead?.effect : nil)
-        layer.setAffineTransform(transform)
+        fade(entry, to: opacity, track: effect == .opacity ? ahead?.effect : nil)
+        turn(entry, to: transform, track: effect == .transform ? ahead?.effect : nil)
         layer.contentsScale = contentsScale
         layer.contents = contents
         if contents == nil {
@@ -187,10 +194,10 @@ final class LayerTreeBuilder {
 
     private static let positionKey = "described.position"
     private static let opacityKey = "described.opacity"
+    private static let transformKey = "described.transform"
 
     /// Puts the layer at `position`, or, when its way there is described, has the
-    /// compositor take it there. The layer's model value is where it comes to rest, so
-    /// nothing moves when the animation ends.
+    /// compositor take it there.
     private func place(_ entry: Entry, at position: CGPoint, origin: CGPoint, track: DisplayList.Ahead.Track<CGPoint>?) {
         let layer = entry.layer
         guard let track else {
@@ -210,11 +217,8 @@ final class LayerTreeBuilder {
             return
         }
         entry.position = (track.seed, gap)
-        let points = remaining(track.values(), from: track.time, step: track.step).map {
-            CGPoint(x: $0.x + gap.width, y: $0.y + gap.height)
-        }
-        layer.position = points.last ?? position
-        animate(layer, keyPath: "position", key: Self.positionKey, values: points, step: track.step)
+        let points = track.values().map { CGPoint(x: $0.x + gap.width, y: $0.y + gap.height) }
+        layer.position = play(track, points, now: position, on: layer, keyPath: "position", key: Self.positionKey)
     }
 
     private func fade(_ entry: Entry, to opacity: Float, track: DisplayList.Ahead.Track<DisplayList.Effect>?) {
@@ -231,32 +235,103 @@ final class LayerTreeBuilder {
             return
         }
         entry.opacitySeed = track.seed
-        let opacities = remaining(track.values(), from: track.time, step: track.step).map { effect -> Float in
+        let opacities = track.values().map { effect -> Float in
             if case let .opacity(value) = effect { value } else { opacity }
         }
-        layer.opacity = opacities.last ?? opacity
-        animate(layer, keyPath: "opacity", key: Self.opacityKey, values: opacities, step: track.step)
+        layer.opacity = play(track, opacities, now: opacity, on: layer, keyPath: "opacity", key: Self.opacityKey)
     }
 
-    /// What is left of a description made at `time`: the values from now on. A description
-    /// reaches the builder when the value first changes, which can be well after it was
-    /// made, as with an animation that starts after a delay.
-    private func remaining<Value>(_ values: [Value], from time: Time, step: Double) -> [Value] {
-        let elapsed = Int(((now - time) / step).rounded())
-        return Array(values.dropFirst(min(max(elapsed, 0), max(values.count - 1, 0))))
-    }
-
-    /// Replaces the animation under `key` with one through `values`, `step` seconds apart.
-    private func animate(_ layer: CALayer, keyPath: String, key: String, values: [Any], step: Double) {
-        guard values.count > 1 else {
-            layer.removeAnimation(forKey: key)
+    private func turn(
+        _ entry: Entry,
+        to transform: LayerKit.CGAffineTransform,
+        track: DisplayList.Ahead.Track<DisplayList.Effect>?
+    ) {
+        let layer = entry.layer
+        guard let track else {
+            if entry.transformSeed != nil {
+                entry.transformSeed = nil
+                layer.removeAnimation(forKey: Self.transformKey)
+            }
+            layer.setAffineTransform(transform)
             return
         }
+        guard entry.transformSeed != track.seed else {
+            return
+        }
+        entry.transformSeed = track.seed
+        var transforms = track.values().map(layerTransform)
+        // The engine gives up on a transform that cannot be undone, such as a scale of
+        // nothing, and says "no effect" instead. Among values that all but vanish that is
+        // the vanishing one, and the nearest of them stands in for it.
+        for index in transforms.indices where transforms[index] == nil {
+            let nearest = [index - 1, index + 1].compactMap { transforms.indices.contains($0) ? transforms[$0] : nil }.first
+            if let nearest, abs(nearest.a * nearest.d - nearest.b * nearest.c) < 0.05 {
+                transforms[index] = nearest
+            }
+        }
+        let final = play(
+            track, transforms.map { $0 ?? .identity }, now: transform,
+            on: layer, keyPath: "transform", key: Self.transformKey,
+            wrap: { CATransform3DMakeAffineTransform($0) }
+        )
+        layer.setAffineTransform(final)
+    }
+
+    /// What an effect does to its layer, when it is a transform a layer can have. Nil for no
+    /// effect at all.
+    private func layerTransform(_ effect: DisplayList.Effect) -> LayerKit.CGAffineTransform? {
+        switch effect {
+        case let .transform(.affine(affine)):
+            LayerKit.CGAffineTransform(a: affine.a, b: affine.b, c: affine.c, d: affine.d, tx: affine.tx, ty: affine.ty)
+        case let .transform(.rotation(data)):
+            LayerKit.CGAffineTransform(translationX: -data.anchor.x, y: -data.anchor.y)
+                .concatenating(LayerKit.CGAffineTransform(rotationAngle: CGFloat(data.angle.radians)))
+                .concatenating(LayerKit.CGAffineTransform(translationX: data.anchor.x, y: data.anchor.y))
+        default:
+            nil
+        }
+    }
+
+    /// Has the compositor take a property of `layer` through `values`, the values of
+    /// `track`, and returns the value the property is to have underneath. For a movement
+    /// that ends that is where it ends, so that nothing moves when the animation is over;
+    /// for one that comes round for ever it is `now`, the value at this moment.
+    private func play<Value>(
+        _ track: DisplayList.Ahead.Track<some Any>,
+        _ values: [Value],
+        now current: Value,
+        on layer: CALayer,
+        keyPath: String,
+        key: String,
+        wrap: (Value) -> Any = { $0 }
+    ) -> Value {
+        // A description reaches the builder when it is made, or later: an item can come to
+        // have a layer in the middle of its animation. Either way it starts from now.
+        let elapsed = max(now - track.time, 0)
+        var values = values
         let animation = CAKeyframeAnimation(keyPath: keyPath)
-        animation.values = values
-        animation.duration = Double(values.count - 1) * step
+        if track.repeats {
+            // One round, ending as it begins, begun when the description was made.
+            let round = Double(values.count - 1) * track.step
+            guard round > 0 else {
+                layer.removeAnimation(forKey: key)
+                return current
+            }
+            animation.repeatCount = .infinity
+            animation.timeOffset = elapsed.truncatingRemainder(dividingBy: round)
+        } else {
+            let passed = Int((elapsed / track.step).rounded())
+            values.removeFirst(min(passed, max(values.count - 1, 0)))
+        }
+        guard values.count > 1 else {
+            layer.removeAnimation(forKey: key)
+            return values.last ?? current
+        }
+        animation.values = values.map(wrap)
+        animation.duration = Double(values.count - 1) * track.step
         animation.calculationMode = .linear
         layer.add(animation, forKey: key)
+        return track.repeats ? current : values[values.count - 1]
     }
 
     // MARK: Content
@@ -462,12 +537,12 @@ final class LayerTreeBuilder {
         var cornerRadius: CGFloat = 0
         var clips = false
         var opacity: Float = 1
-        var fades = false
+        var described = Described.nothing
         var transform = LayerKit.CGAffineTransform.identity
         var ahead = item.ahead
         switch effect {
         case let .opacity(alpha):
-            fades = true
+            described = .opacity
             opacity = alpha
         case let .clip(path, _, _):
             switch path.storage {
@@ -481,12 +556,9 @@ final class LayerTreeBuilder {
             }
             // The layer's own coordinates start at the clip's corner, so the items keep theirs.
             origin = CGPoint(x: position.x + bounds.minX, y: position.y + bounds.minY)
-        case let .transform(.affine(affine)):
-            transform = LayerKit.CGAffineTransform(a: affine.a, b: affine.b, c: affine.c, d: affine.d, tx: affine.tx, ty: affine.ty)
-        case let .transform(.rotation(data)):
-            transform = LayerKit.CGAffineTransform(translationX: -data.anchor.x, y: -data.anchor.y)
-                .concatenating(LayerKit.CGAffineTransform(rotationAngle: CGFloat(data.angle.radians)))
-                .concatenating(LayerKit.CGAffineTransform(translationX: data.anchor.x, y: data.anchor.y))
+        case .transform(.affine), .transform(.rotation):
+            described = .transform
+            transform = layerTransform(effect) ?? .identity
         case .transform:
             CairoDisplayListRenderer.unsupported("3D transform in layers")
         case .mask:
@@ -507,8 +579,11 @@ final class LayerTreeBuilder {
             ahead = nil
         default:
             // Groups and bookkeeping effects change nothing that is drawn. One that also
-            // moves nothing, now or on its way, needs no layer of its own.
-            if position == .zero, ahead?.origin == nil {
+            // moves nothing, now or on its way, needs no layer of its own. A transform being
+            // animated keeps its layer at a value the engine gave up on (see `turn`).
+            if case .identity = effect, ahead?.effect != nil {
+                described = .transform
+            } else if position == .zero, ahead?.origin == nil {
                 return layers(for: list)
             }
         }
@@ -516,7 +591,7 @@ final class LayerTreeBuilder {
         configure(
             entry, bounds: bounds, position: origin,
             cornerRadius: cornerRadius, clips: clips, opacity: opacity, transform: transform,
-            ahead: ahead, origin: position, fades: fades
+            ahead: ahead, origin: position, effect: described
         )
         setSublayers(of: entry.layer, to: layers(for: list, in: entry))
         return [entry.layer]
@@ -544,11 +619,11 @@ final class LayerTreeBuilder {
             // A new layer starts unscrolled, which the scroll view has to hear: it may be
             // one that has scrolled before, with another layer.
             if entry.scrollHandle == nil {
-                group.handle.moved?(.zero, true)
+                group.handle.report(.zero, isAtRest: true)
             }
             entry.scrollHandle = group.handle
             scroll.onScroll = { [weak handle = group.handle] offset, phase in
-                handle?.moved?(CGSize(width: offset.x, height: offset.y), phase == .idle)
+                handle?.report(CGSize(width: offset.x, height: offset.y), isAtRest: phase == .idle)
             }
         }
         setSublayers(of: scroll, to: layers(for: list, in: entry))
